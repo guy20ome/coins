@@ -1,10 +1,10 @@
 {
     "logs": [
         {
-            "outputFile": "com.example.coins.app-mergeDebugResources-46:/values-v16/values-v16.xml",
+            "outputFile": "com.example.coins.app-mergeDebugResources-57:/values-v16/values-v16.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\gniva\\.gradle\\caches\\9.0.0\\transforms\\986811aa6dc1dfce305581777a4b6733\\transformed\\core-1.12.0\\res\\values-v16\\values-v16.xml",
+                    "source": "C:\\Users\\gniva\\.gradle\\caches\\9.4.1\\transforms\\d16dbb9ec3e9fe07a547d9924364acc3\\transformed\\core-1.12.0\\res\\values-v16\\values-v16.xml",
                     "from": {
                         "startLines": "2",
                         "startColumns": "4",

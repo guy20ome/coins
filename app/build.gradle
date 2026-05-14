@@ -14,6 +14,8 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -44,10 +46,14 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.0"
 
     // Compose
-    implementation "androidx.compose.ui:ui:1.6.4"
-    implementation "androidx.compose.material:material:1.6.4"
-    implementation "androidx.compose.ui:ui-tooling-preview:1.6.4"
-    implementation "androidx.compose.material:material-icons-extended:1.6.4"
+    implementation platform(libs.androidx.compose.bom)
+    implementation "androidx.compose.ui:ui"
+    implementation "androidx.compose.material:material"
+    implementation "androidx.compose.ui:ui-tooling-preview"
+    implementation "androidx.compose.material:material-icons-extended"
+    implementation libs.androidx.material3
+    implementation libs.androidx.navigation.compose
+    implementation libs.androidx.hilt.navigation.compose
 
     // Lifecycle
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0"
