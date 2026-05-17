@@ -1,6 +1,7 @@
 # Gradle files
 .gradle/
 build/
+.kotlin/
 
 # Android Studio / IntelliJ files
 .idea/
