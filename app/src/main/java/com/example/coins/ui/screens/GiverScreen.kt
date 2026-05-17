@@ -15,19 +15,19 @@ import com.example.coins.viewmodel.CoinsViewModel
 @Composable
 fun GiverScreen(
     navController: NavController,
-    viewModel: CoinsViewModel
+    viewModel: CoinsViewModel,
 ) {
     var amountText by remember { mutableStateOf("") }
     val balance by viewModel.balance.collectAsState()
     val maxCanGenerate = 25 - balance
     
-    var showError by remember { mutableStateOf(false) }
+    var showError by remember { mutableStateOf(value = false) }
     var errorMessage by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Generate Coins") })
-        }
+        },
     ) { padding ->
         Column(
             modifier = Modifier
@@ -35,7 +35,7 @@ fun GiverScreen(
                 .padding(padding)
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Center,
         ) {
             Text(text = "Current Balance: €$balance")
             Text(text = "You can generate up to €$maxCanGenerate more.")
@@ -56,7 +56,7 @@ fun GiverScreen(
                     if (showError) {
                         Text(text = errorMessage, color = MaterialTheme.colorScheme.error)
                     }
-                }
+                },
             )
             
             Spacer(modifier = Modifier.height(24.dp))
@@ -64,19 +64,19 @@ fun GiverScreen(
             Button(
                 onClick = {
                     val amount = amountText.toIntOrNull()
-                    if (amount == null || amount <= 0) {
+                    if ((amount == null) || (amount <= 0)) {
                         errorMessage = "Please enter a valid amount"
                         showError = true
-                    } else if (balance + amount > 25) {
+                    } else if ((balance + amount) > 25) {
                         errorMessage = "Total balance cannot exceed €25"
                         showError = true
                     } else {
-                        viewModel.updateBalance(balance + amount)
+                        viewModel.generateCoins(amount, giverId = "default-giver")
                         navController.popBackStack()
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = maxCanGenerate > 0
+                enabled = maxCanGenerate > 0,
             ) {
                 Text("Generate")
             }

@@ -20,5 +20,5 @@ data class Coin(
     val ownerId: String?,
     val latitude: Double,
     val longitude: Double,
-    val isDestroyed: Boolean = false
+    val isDestroyed: Boolean = false,
 )
