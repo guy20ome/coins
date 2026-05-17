@@ -1,5 +1,5 @@
 # coins
-replace the real coins with virtual coins
+replace the real coins with virtual coins for people without a bank account
 
 coins let people without any bank account receive coins on their smartphone and give coins from their smartphone to pay for some daily needs
 the people willing to give/receive coins will give a payment method.
