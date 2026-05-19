@@ -27,3 +27,7 @@ captures/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+.vscode/settings.json
+.claude/
+CLAUDE.md
