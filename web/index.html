@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Coins</title>
+<style>
+  :root {
+    --primary: #FFD700;
+    --bg: #F5F5F5;
+    --surface: #FFFFFF;
+    --text: #1C1B1F;
+    --error: #B3261E;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, sans-serif; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #2b2b2b;
+    padding: 20px;
+  }
+  /* ---- phone frame (device emulation) ---- */
+  .phone {
+    width: 380px;
+    height: 780px;
+    background: #111;
+    border-radius: 44px;
+    padding: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+    flex-shrink: 0;
+  }
+  .screen {
+    width: 100%;
+    height: 100%;
+    border-radius: 34px;
+    overflow: hidden;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .statusbar {
+    height: 28px;
+    background: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    font-size: 12px;
+    color: #333;
+    flex-shrink: 0;
+  }
+  /* ---- app bar ---- */
+  .appbar {
+    background: var(--primary);
+    color: var(--text);
+    padding: 14px 20px;
+    font-size: 20px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  /* ---- content ---- */
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px;
+    gap: 8px;
+  }
+  .balance {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 20px 0 28px;
+  }
+  .btn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 100px;
+    background: #6750A4;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    margin: 6px 0;
+    transition: filter .15s, opacity .15s;
+  }
+  .btn:hover { filter: brightness(1.1); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.outlined {
+    background: transparent;
+    border: 1px solid #6750A4;
+    color: #6750A4;
+  }
+  .navrow { display: flex; gap: 8px; width: 100%; }
+  .field {
+    width: 100%;
+    margin-top: 16px;
+  }
+  .field label { font-size: 13px; color: #666; display: block; margin-bottom: 4px; }
+  .field input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 15px;
+    outline: none;
+  }
+  .field input:focus { border-color: #6750A4; }
+  .field .support { color: var(--error); font-size: 12px; margin-top: 4px; min-height: 16px; }
+  .hint { color: #555; margin: 6px 0; }
+  .placeholder { color: #999; margin-top: 60px; text-align: center; }
+  /* ---- dialog ---- */
+  .scrim {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+  .dialog {
+    background: var(--surface);
+    border-radius: 28px;
+    padding: 24px;
+    width: 85%;
+    box-shadow: 0 10px 40px rgba(0,0,0,.3);
+  }
+  .dialog h2 { font-size: 20px; margin-bottom: 16px; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .textbtn {
+    background: none; border: none; color: #6750A4;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    padding: 8px 12px; border-radius: 20px;
+  }
+  .textbtn:hover { background: rgba(103,80,164,.1); }
+  /* ---- snackbar ---- */
+  .snackbar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #323033;
+    color: #fff;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.4);
+    z-index: 20;
+    opacity: 0;
+    transition: opacity .2s;
+    max-width: 85%;
+  }
+  .snackbar.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="screen">
+    <div class="statusbar">
+      <span id="clock">9:41</span>
+      <span>📶 🔋</span>
+    </div>
+    <div class="appbar" id="appbar">Coins</div>
+    <div class="content" id="content"></div>
+    <div class="snackbar" id="snackbar"></div>
+  </div>
+</div>
+
+<script>
+  // ---- data model (mirrors Coin.kt) ----
+  class Coin {
+    constructor(coinId, amountCents, giverId, ownerId, latitude = 0.0, longitude = 0.0, isDestroyed = false) {
+      this.coinId = coinId;
+      this.amountCents = amountCents;
+      this.giverId = giverId;
+      this.ownerId = ownerId;
+      this.latitude = latitude;
+      this.longitude = longitude;
+      this.isDestroyed = isDestroyed;
+    }
+  }
+
+  // ---- repository (mirrors CoinRepository.kt) ----
+  class CoinRepository {
+    constructor() {
+      this.coinList = [];
+      this.balanceEuros = 0;
+      this.allCoins = [];
+    }
+    addCoin(coin) {
+      this.coinList.push(coin);
+      this.recalculate();
+    }
+    recalculate() {
+      const totalCents = this.coinList.filter(c => !c.isDestroyed)
+                                       .reduce((sum, c) => sum + c.amountCents, 0);
+      this.balanceEuros = Math.floor(totalCents / 100);
+      this.allCoins = [...this.coinList];
+    }
+  }
+
+  // ---- view model (mirrors CoinsViewModel.kt) ----
+  const MAX_BALANCE = 25;
+  const GIVER_ID = "default-giver";
+
+  class CoinsViewModel {
+    constructor(repository = new CoinRepository()) {
+      this.repository = repository;
+      this.listeners = [];
+      this.balance = 0;
+      this.coins = [];
+      this.error = null;
+    }
+    onChange(fn) { this.listeners.push(fn); }
+    notify() { this.listeners.forEach(fn => fn()); }
+    generateCoins(count, giverId) {
+      if ((this.balance + count) > MAX_BALANCE) {
+        this.error = `Cannot exceed €${MAX_BALANCE} limit (currently €${this.balance})`;
+        this.notify();
+        return false;
+      }
+      if (count <= 0) {
+        this.error = "Count must be positive";
+        this.notify();
+        return false;
+      }
+      this.error = null;
+      for (let i = 0; i < count; i++) {
+        this.repository.addCoin(new Coin(
+          crypto.randomUUID(),
+          100, // €1.00
+          giverId,
+          giverId,
+        ));
+      }
+      this.balance = this.repository.balanceEuros;
+      this.coins = this.repository.allCoins;
+      this.notify();
+      return true;
+    }
+    clearError() { this.error = null; this.notify(); }
+  }
+
+  // ---- UI / navigation ----
+  const vm = new CoinsViewModel();
+  const content = document.getElementById("content");
+  const appbar = document.getElementById("appbar");
+  const snackbar = document.getElementById("snackbar");
+  const screen = document.querySelector(".screen");
+  let route = "home";
+
+  function showSnackbar(msg) {
+    snackbar.textContent = msg;
+    snackbar.classList.add("show");
+    setTimeout(() => snackbar.classList.remove("show"), 3000);
+  }
+
+  function navigate(target) {
+    route = target;
+    render();
+  }
+
+  function render() {
+    if (route === "home") renderHome();
+    else if (route === "giver") renderGiver();
+    else if (route === "send") renderPlaceholder("Send Coins");
+    else if (route === "receiver") renderPlaceholder("Receive Coins");
+  }
+
+  function renderHome() {
+    appbar.textContent = "Coins";
+    content.innerHTML = `
+      <div class="balance">Balance: €${vm.balance}</div>
+      <button class="btn" id="btn-gen">Generate Coins</button>
+      <button class="btn" id="btn-send">Send Coins</button>
+      <button class="btn" id="btn-receive">Receive Coins</button>
+    `;
+    document.getElementById("btn-gen").onclick = showGenerateDialog;
+    document.getElementById("btn-send").onclick = () => navigate("send");
+    document.getElementById("btn-receive").onclick = () => navigate("receiver");
+  }
+
+  function renderGiver() {
+    appbar.textContent = "Generate Coins";
+    const maxCanGenerate = MAX_BALANCE - vm.balance;
+    content.innerHTML = `
+      <p class="hint">Current Balance: €${vm.balance}</p>
+      <p class="hint">You can generate up to €${maxCanGenerate} more.</p>
+      <div class="field">
+        <label>Amount to generate (€)</label>
+        <input id="amount" type="number" min="0" inputmode="numeric">
+        <div class="support" id="support"></div>
+      </div>
+      <button class="btn" id="btn-go" ${maxCanGenerate <= 0 ? "disabled" : ""}>Generate</button>
+      <button class="btn outlined" id="btn-back">Back</button>
+    `;
+    document.getElementById("btn-go").onclick = () => {
+      const amount = parseInt(document.getElementById("amount").value, 10);
+      const support = document.getElementById("support");
+      if (!amount || amount <= 0) {
+        support.textContent = "Please enter a valid amount";
+      } else if ((vm.balance + amount) > MAX_BALANCE) {
+        support.textContent = `Total balance cannot exceed €${MAX_BALANCE}`;
+      } else {
+        vm.generateCoins(amount, GIVER_ID);
+        navigate("home");
+      }
+    };
+    document.getElementById("btn-back").onclick = () => navigate("home");
+  }
+
+  function renderPlaceholder(title) {
+    appbar.textContent = title;
+    content.innerHTML = `
+      <p class="placeholder">${title} screen<br>(placeholder — not implemented in the Android app either)</p>
+      <button class="btn outlined" id="btn-back" style="margin-top:24px">Back</button>
+    `;
+    document.getElementById("btn-back").onclick = () => navigate("home");
+  }
+
+  function showGenerateDialog() {
+    const scrim = document.createElement("div");
+    scrim.className = "scrim";
+    scrim.innerHTML = `
+      <div class="dialog">
+        <h2>Generate Coins</h2>
+        <div class="field" style="margin-top:0">
+          <label>Number of €1 coins (max ${MAX_BALANCE})</label>
+          <input id="coin-count" type="number" min="0" inputmode="numeric">
+        </div>
+        <div class="dialog-actions">
+          <button class="textbtn" id="dlg-cancel">Cancel</button>
+          <button class="textbtn" id="dlg-ok">Generate</button>
+        </div>
+      </div>
+    `;
+    screen.appendChild(scrim);
+    const close = () => scrim.remove();
+    scrim.onclick = (e) => { if (e.target === scrim) close(); };
+    scrim.querySelector("#dlg-cancel").onclick = close;
+    scrim.querySelector("#dlg-ok").onclick = () => {
+      const count = parseInt(scrim.querySelector("#coin-count").value, 10) || 0;
+      const success = vm.generateCoins(count, GIVER_ID);
+      if (success) close();
+    };
+    scrim.querySelector("#coin-count").focus();
+  }
+
+  // ---- clock ----
+  function tick() {
+    document.getElementById("clock").textContent =
+      new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  setInterval(tick, 10000);
+  tick();
+
+  // ---- error -> snackbar (mirrors LaunchedEffect in HomeScreen) ----
+  vm.onChange(() => {
+    if (vm.error) {
+      showSnackbar(vm.error);
+      vm.clearError();
+    }
+    if (route === "giver") render();
+  });
+
+  render();
+</script>
+</body>
+</html>
