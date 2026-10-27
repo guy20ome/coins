@@ -18,3 +18,15 @@ Receiver :
 - When a unique coinid is received, the position is checked, if the coin has not the same geographical area than you, the coin is rejected.
 - If the geagraphical area matches, the Giver is immediatly contacted to allow the transaction between his bank account and the receiver bank account.
 - This operation destroy the unique coinid
+
+Starting the application the user must
+- provide is full name to be used to generate his coins
+- provide access to the localisation
+
+Coin Generation
+- each coin has a unique identifier based on the full name of the user, the location where it is generated and the time it is generated
+- when a user send a coin to another user, the location of the receiver is checked against the location of the coins
+
+Sending coins
+- two users must connect their phone with bluetooth through the application
+- the coins are moved to the receiver
