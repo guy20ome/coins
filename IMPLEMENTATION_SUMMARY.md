@@ -1,118 +1,88 @@
 # Coin Generation and Transfer Implementation Summary
 
-## ✅ Completed Work
-
-The coin generation and transfer system has been successfully implemented based on the rules defined in the README. Here's what was created:
+This document serves as the centralized documentation for the **coin generation** and **transfer** system in the Coins app.
 
 ---
 
-## 📁 Files Created
+## 📌 Overview
 
-### Core Model Classes
-1. **[Coin.kt](file:///home/gn/StudioProjects/coins/app/src/main/java/com/coins/model/Coin.kt)**
-   - Represents a virtual coin with a unique, human-readable ID
-   - Contains location validation logic (25 km zone check)
-   - Tracks coin status (GENERATED, SENT, DESTROYED)
-   - Implements Haversine formula for distance calculation
-
-2. **[Wallet.kt](file:///home/gn/StudioProjects/coins/app/src/main/java/com/coins/model/Wallet.kt)**
-   - Manages a user's coin collection
-   - Enforces the 25€ limit (generated + sent - destroyed)
-   - Provides methods for generating, sending, receiving, and destroying coins
-   - Tracks all coin states
-
-3. **[BluetoothCoinTransfer.kt](file:///home/gn/StudioProjects/coins/app/src/main/java/com/coins/bluetooth/BluetoothCoinTransfer.kt)**
-   - Handles Bluetooth-based coin transfers
-   - Validates both devices are in the same 25 km zone
-   - Validates receiver is in the valid zone for the specific coin
-   - Coordinates transfer between sender and receiver wallets
-
-### Test Files
-4. **[CoinTest.kt](file:///home/gn/StudioProjects/coins/app/src/test/java/com/coins/model/CoinTest.kt)**
-   - Comprehensive unit tests for all core functionality
-   - Tests coin ID generation
-   - Tests location validation (within 25 km)
-   - Tests wallet operations (generate, send, receive, destroy)
-   - Tests transfer validation
-
-### Documentation
-5. **[COIN_GENERATION_IMPLEMENTATION.md](file:///home/gn/StudioProjects/coins/COIN_GENERATION_IMPLEMENTATION.md)**
-   - Detailed technical documentation
-   - Usage examples
-   - API reference
-   - Validation rules
-
-6. **[IMPLEMENTATION_SUMMARY.md](file:///home/gn/StudioProjects/coins/IMPLEMENTATION_SUMMARY.md)** (this file)
-   - Overview of completed work
-   - Key features implemented
-   - Next steps
+The system allows users without bank accounts to:
+1. **Generate virtual coins** based on their name, location, and timestamp.
+2. **Transfer coins** to other users via Bluetooth, with 25 km location validation.
+3. **Track coin status** (`GENERATED`, `SENT`, `DESTROYED`) while enforcing the 25€ limit per wallet.
 
 ---
 
-## 🔑 Key Features Implemented
+## 📁 Project Architecture & Components
 
-### 1. Human-Readable Coin IDs
+### 1. Core Models & Services
+
+* **[Coin.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/main/java/com/coins/model/Coin.kt)**
+  - Represents a virtual coin with a unique, human-readable ID.
+  - Formats Coin IDs: `<fullName>_<gpsCoordinate>_<timestamp>_<giverId>_<receiverId>`
+  - Performs distance validation using the **Haversine formula** (25 km radius check).
+  - Tracks state: `GENERATED`, `SENT`, `DESTROYED`.
+
+* **[Wallet.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/main/java/com/coins/model/Wallet.kt)**
+  - Manages a user's coin collection and balance.
+  - Enforces the 25€ total limit (`generated + sent - destroyed`).
+  - Provides methods: `generateCoin()`, `sendCoin()`, `receiveCoin()`, `destroyCoin()`, and `calculateCurrentValue()`.
+
+* **[BluetoothCoinTransfer.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/main/java/com/coins/bluetooth/BluetoothCoinTransfer.kt)**
+  - Manages Bluetooth-based coin transfer workflows.
+  - Validates that sender and receiver devices are in the same 25 km zone.
+  - Validates receiver location against the coin's generation zone.
+
+### 2. UI & Navigation (Jetpack Compose)
+
+* **[HomeScreen.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/main/java/com/example/coins/ui/screens/HomeScreen.kt)**: Main dashboard displaying wallet balance, coin generation modal, and live list of generated coins.
+* **[GiverScreen.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/main/java/com/example/coins/ui/screens/GiverScreen.kt)**: Screen for managing coin generation and transfers for givers.
+* **[RegistrationScreen.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/main/java/com/example/coins/ui/screens/RegistrationScreen.kt)**: First-time onboarding screen for user registration.
+* **[CoinsViewModel.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/main/java/com/example/coins/viewmodel/CoinsViewModel.kt)**: State management providing reactive `StateFlow` streams for balance and coin list updates.
+* **[CoinRepository.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/main/java/com/example/coins/data/repository/CoinRepository.kt)**: In-memory singleton repository holding global coin and balance state.
+* **[PreferencesHelper.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/main/java/com/example/coins/data/PreferencesHelper.kt)**: Utility for storing first-time launch and registration preferences.
+
+### 3. Unit Testing
+
+* **[CoinTest.kt](file:///C:/Users/gniva/StudioProjects/coins/app/src/test/java/com/coins/model/CoinTest.kt)**: Unit tests for coin ID generation, 25 km location checks, wallet limits, and transfer validations.
+
+---
+
+## 🔑 Key Features & Validation Rules
+
+### 1. Human-Readable Coin ID Format
 ```
-Format: <fullName>_<gpsCoordinate>_<timestamp>_<giverId>_<receiverId>
+Format:  <fullName>_<gpsCoordinate>_<timestamp>_<giverId>_<receiverId>
 Example: JohnDoe_48.8566,2.3522_1712345678900_GIVER123_RECEIVER456
 ```
 
-### 2. Location Validation
-- Uses **Haversine formula** to calculate distances between GPS coordinates
-- Validates both devices are in the same 25 km zone for Bluetooth transfer
-- Validates receiver is in the valid zone for the specific coin
+### 2. Validation Matrix
 
-### 3. Wallet Management
-- Tracks generated, sent, and destroyed coins
-- Enforces 25€ limit (sum of generated + sent - destroyed)
-- Prevents generation when wallet is full
-
-### 4. Secure Transfers
-- Bluetooth transfer only initiates if both devices are in the same zone
-- Coin transfer only completes if receiver is in the valid zone for that coin
-- Both phones independently validate locations
+| Rule | Enforcement Mechanism |
+|------|-----------------------|
+| **Coin Uniqueness** | Formatted using user name, GPS coordinates, timestamp, and transaction IDs |
+| **25€ Limit** | Wallet restricts creation if total `generated + sent - destroyed` exceeds 25€ |
+| **Location Validation** | Haversine formula verifies coordinates within a 25 km radius |
+| **Bluetooth Proximity** | Both devices must be within the same 25 km zone during transfer |
+| **Recipient Zone** | Recipient must be within 25 km of the original coin generation coordinate |
 
 ---
 
-## 📊 Validation Rules Enforced
+## 📖 Code Usage Examples
 
-| Rule | Implementation |
-|------|----------------|
-| **Coin ID uniqueness** | Based on name + location + timestamp + giver/receiver IDs |
-| **25€ limit** | Wallet tracks generated + sent - destroyed coins |
-| **Location validation** | Haversine formula checks 25 km radius |
-| **Same zone for Bluetooth** | Both devices must be within 25 km of each other |
-| **Valid zone for coin transfer** | Receiver must be within 25 km of coin's location |
-
----
-
-## 🧪 Testing
-
-All functionality is covered by unit tests in `CoinTest.kt`:
-
-```bash
-./gradlew test
-```
-
-Tests include:
-- ✅ Coin ID generation and format validation
-- ✅ Location validation (within 25 km)
-- ✅ Wallet operations (generate, send, receive, destroy)
-- ✅ Transfer validation (same zone, valid zone)
-- ✅ Edge cases (wallet full, out-of-zone transfers)
-
----
-
-## 📖 Usage Examples
-
-### Generate a Coin
+### 1. Generating a Coin
 ```kotlin
 val wallet = Wallet(userId = "USER123", fullName = "John Doe")
-val coin = wallet.generateCoin("48.8566,2.3522", System.currentTimeMillis())
-val coinId = coin?.generateCoinId()
+val parisGps = "48.8566,2.3522"
+val coin = wallet.generateCoin(parisGps, System.currentTimeMillis())
+
+if (coin != null) {
+    val coinId = coin.generateCoinId()
+    println("Generated coin: $coinId")
+}
 ```
 
-### Transfer a Coin via Bluetooth
+### 2. Transferring a Coin via Bluetooth
 ```kotlin
 val transferSuccess = BluetoothCoinTransfer().transferCoin(
     senderWallet = senderWallet,
@@ -121,77 +91,36 @@ val transferSuccess = BluetoothCoinTransfer().transferCoin(
     senderGps = "48.8566,2.3522",
     receiverGps = "48.8566,2.3522"
 )
+if (transferSuccess) {
+    println("Transfer successful!")
+}
 ```
 
-### Check Wallet Balance
+### 3. Checking Wallet Balance
 ```kotlin
 val currentValue = wallet.calculateCurrentValue()
+println("Current wallet value: $currentValue €")
 ```
+
+---
+
+## 🧪 Testing
+
+Run all unit tests using Gradle:
+```bash
+./gradlew test
+```
+
+Covered Scenarios:
+- ✅ Coin ID formatting and uniqueness
+- ✅ Haversine 25 km radius calculation
+- ✅ Wallet balance calculation and 25€ limit enforcement
+- ✅ Bluetooth same-zone and receiver location verification
 
 ---
 
 ## 🚀 Next Steps
 
-### Immediate (For Full Integration)
-1. **Bluetooth API Integration**
-   - Implement actual Bluetooth discovery and connection
-   - Add device pairing logic
-   - Handle Bluetooth permissions and errors
-
-2. **UI Implementation**
-   - Create screens for:
-     - Generating coins
-     - Viewing wallet balance
-     - Sending/receiving coins
-     - Location permission requests
-
-3. **Backend Integration**
-   - Store coin data on a server
-   - Validate transactions with backend
-   - Handle coin destruction (conversion to fiat)
-
-### Future Enhancements
-1. **Multi-Coin Transfers**
-   - Support transferring multiple coins at once
-   - Batch validation and transfer
-
-2. **Transaction History**
-   - Track all coin movements
-   - Provide receipts for transfers
-
-3. **Advanced Location Services**
-   - Use GPS accuracy improvements
-   - Add fallback to network location
-   - Implement location caching
-
-4. **Security Enhancements**
-   - Add coin signature validation
-   - Implement anti-tampering measures
-   - Add transaction confirmation
-
-5. **Performance Optimizations**
-   - Optimize Haversine calculations
-   - Cache location data
-   - Implement efficient Bluetooth communication
-
----
-
-## 📝 Notes
-
-- The implementation follows **Kotlin best practices** and uses modern Android development patterns
-- All location calculations are done **on-device** for privacy and offline capability
-- The coin ID format is **human-readable** while maintaining uniqueness and security
-- Both sender and receiver phones **independently validate** locations, ensuring no single point of failure
-
----
-
-## 🎯 Summary
-
-✅ **Coin generation system** implemented with human-readable IDs
-✅ **Location validation** using Haversine formula (25 km radius)
-✅ **Wallet management** enforcing 25€ limit
-✅ **Bluetooth transfer** with zone validation
-✅ **Comprehensive unit tests** covering all functionality
-✅ **Detailed documentation** for developers
-
-The system is ready for integration with the actual app UI and Bluetooth APIs!
+1. **Bluetooth Low Energy (BLE) Integration**: Connect `BluetoothCoinTransfer` logic to actual BLE advertising/scanning APIs.
+2. **Backend Sync**: Optional server backup for coin registry and offline verification tokens.
+3. **Location Services**: Integrate FusedLocationProviderClient for automatic GPS coordinates during coin generation.

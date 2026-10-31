@@ -1,32 +1,48 @@
 package com.coins.model
 
-
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+import java.util.UUID
 
 /**
  * Represents a virtual coin with a unique identifier and location-based validation.
- *
- * @param fullName The full name of the user who generated the coin.
- * @param gpsCoordinate The GPS coordinate (latitude,longitude) where the coin was generated.
- * @param timestamp The timestamp (in milliseconds) when the coin was generated.
- * @param giverId The unique identifier of the giver.
- * @param receiverId The unique identifier of the receiver (optional, set during transfer).
- * @param status The current status of the coin (GENERATED, SENT, DESTROYED).
  */
+@Entity(tableName = "coins")
 data class Coin(
-    val fullName: String,
-    val gpsCoordinate: String,
-    val timestamp: Long,
-    val giverId: String,
+    @PrimaryKey val coinId: String = UUID.randomUUID().toString(),
+    val amountCents: Int = 100,
+    val giverId: String = "",
+    var ownerId: String? = null,
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
+    var isDestroyed: Boolean = false,
+    val fullName: String = "",
+    val gpsCoordinate: String = "$latitude,$longitude",
+    val timestamp: Long = System.currentTimeMillis(),
     var receiverId: String? = null,
     var status: CoinStatus = CoinStatus.GENERATED,
 ) {
 
     /**
      * Generates a unique coin ID in a readable format.
-     * Format: <fullName>_<gpsCoordinate>_<timestamp>_<giverId>_<receiverId>
+     * Format: <fullName>_<gpsCoordinate>_<YYYYMMDDHHMMSS>
      */
     fun generateCoinId(): String {
-        return "${fullName}_${gpsCoordinate}_${timestamp}_${giverId}_${receiverId ?: ""}"
+        val formattedTimestamp = formatTimestamp(timestamp)
+        return if (fullName.isNotEmpty()) {
+            "${fullName}_${gpsCoordinate}_${formattedTimestamp}"
+        } else {
+            coinId
+        }
+    }
+
+    /**
+     * Formats timestamp to YYYYMMDDHHMMSS format
+     */
+    private fun formatTimestamp(timestamp: Long): String {
+        val date = java.util.Date(timestamp)
+        val format = java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.getDefault())
+        return format.format(date)
     }
 
     /**
@@ -36,20 +52,23 @@ data class Coin(
      * @return true if the receiver is within 25 km, false otherwise.
      */
     fun isWithin25Km(receiverGps: String): Boolean {
-        val (coinLat, coinLon) = gpsCoordinate.split(",").map { it.trim().toDouble() }
-        val (receiverLat, receiverLon) = receiverGps.split(",").map { it.trim().toDouble() }
+        val coord = if (gpsCoordinate.contains(",")) gpsCoordinate else "$latitude,$longitude"
+        val parts = coord.split(",")
+        if (parts.size < 2) return false
+        val coinLat = parts[0].trim().toDoubleOrNull() ?: latitude
+        val coinLon = parts[1].trim().toDoubleOrNull() ?: longitude
+
+        val rParts = receiverGps.split(",")
+        if (rParts.size < 2) return false
+        val receiverLat = rParts[0].trim().toDoubleOrNull() ?: return false
+        val receiverLon = rParts[1].trim().toDoubleOrNull() ?: return false
+
         val distance = haversine(coinLat, coinLon, receiverLat, receiverLon)
         return distance <= 25.0
     }
 
     /**
      * Calculates the distance between two GPS coordinates using the Haversine formula.
-     *
-     * @param lat1 Latitude of the first coordinate.
-     * @param lon1 Longitude of the first coordinate.
-     * @param lat2 Latitude of the second coordinate.
-     * @param lon2 Longitude of the second coordinate.
-     * @return Distance in kilometers.
      */
     private fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val earthRadius = 6371.0 // Earth's radius in kilometers
@@ -69,6 +88,7 @@ data class Coin(
      */
     fun markAsSent(receiverId: String) {
         this.receiverId = receiverId
+        this.ownerId = receiverId
         this.status = CoinStatus.SENT
     }
 
@@ -76,6 +96,7 @@ data class Coin(
      * Updates the coin status to DESTROYED.
      */
     fun markAsDestroyed() {
+        this.isDestroyed = true
         this.status = CoinStatus.DESTROYED
     }
 }

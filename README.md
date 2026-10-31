@@ -30,3 +30,4 @@ Coin Generation
 Sending coins
 - two users must connect their phone with bluetooth through the application
 - the coins are moved to the receiver
+

@@ -16,23 +16,22 @@ class CoinTest {
         val fullName = "John Doe"
         val gpsCoordinate = "48.8566,2.3522"
         val timestamp = System.currentTimeMillis()
-        val giverId = "GIVER123"
-        val receiverId = "RECEIVER456"
 
         val coin = Coin(
             fullName = fullName,
             gpsCoordinate = gpsCoordinate,
             timestamp = timestamp,
-            giverId = giverId,
-            receiverId = receiverId
+            giverId = "GIVER123"
         )
 
         val coinId = coin.generateCoinId()
         assertTrue(coinId.contains(fullName))
         assertTrue(coinId.contains(gpsCoordinate))
-        assertTrue(coinId.contains(timestamp.toString()))
-        assertTrue(coinId.contains(giverId))
-        assertTrue(coinId.contains(receiverId))
+        // Check that the timestamp is formatted as YYYYMMDDHHMMSS (14 digits)
+        val timestampPattern = "\\d{14}".toRegex()
+        assertTrue("Coin ID should contain 14-digit timestamp", timestampPattern.containsMatchIn(coinId))
+        // Check that it does NOT contain giverId or receiverId
+        assertFalse("Coin ID should not contain giverId", coinId.contains("GIVER123"))
     }
 
     @Test
@@ -109,14 +108,16 @@ class CoinTest {
         val coin = senderWallet.generateCoin(parisGps, System.currentTimeMillis())
         assertNotNull(coin)
 
-        // Send the coin to the receiver
-        val sendSuccess = senderWallet.sendCoin(
+        // Transfer the coin to the receiver via BluetoothCoinTransfer
+        val transferSuccess = com.coins.bluetooth.BluetoothCoinTransfer().transferCoin(
+            senderWallet = senderWallet,
+            receiverWallet = receiverWallet,
             coinId = coin!!.generateCoinId(),
-            receiverId = receiverWallet.userId,
-            receiverGps = parisGps // Same location
+            senderGps = parisGps,
+            receiverGps = parisGps
         )
 
-        assertTrue(sendSuccess)
+        assertTrue(transferSuccess)
         assertEquals(0, senderWallet.calculateCurrentValue())
         assertEquals(1, receiverWallet.calculateCurrentValue())
     }

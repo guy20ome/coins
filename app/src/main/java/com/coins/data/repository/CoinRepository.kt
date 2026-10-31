@@ -1,6 +1,6 @@
-package com.example.coins.data.repository
+package com.coins.data.repository
 
-import com.example.coins.data.model.Coin
+import com.coins.model.Coin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -9,6 +9,10 @@ import kotlinx.coroutines.flow.StateFlow
  * It keeps a mutable list of coins and updates the balance (in whole euros).
  */
 class CoinRepository {
+    companion object {
+        val instance = CoinRepository()
+    }
+
     private val coinList = mutableListOf<Coin>()
 
     private val _balance = MutableStateFlow(0) // balance in euros
@@ -19,6 +23,7 @@ class CoinRepository {
 
     /** Add a new coin and recalculate the balance. */
     fun addCoin(coin: Coin) {
+        println("CoinRepository: Adding coin ${coin.coinId}")
         coinList.add(coin)
         recalculate()
     }
@@ -27,5 +32,6 @@ class CoinRepository {
         val totalCents = coinList.asSequence().filter { !it.isDestroyed }.sumOf { it.amountCents }
         _balance.value = totalCents / 100 // convert to euros
         _coins.value = coinList.toList()
+        println("CoinRepository: Emitting ${coinList.size} coins")
     }
 }

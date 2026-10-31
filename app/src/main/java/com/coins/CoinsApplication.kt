@@ -1,4 +1,4 @@
-package com.example.coins
+package com.coins
 
 import android.app.Application
 

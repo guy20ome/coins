@@ -91,12 +91,12 @@ data class Wallet(
     }
 
     /**
-     * Calculates the current value of the wallet (generated + sent - destroyed).
+     * Calculates the current value of the wallet.
      *
      * @return The current value in €.
      */
     fun calculateCurrentValue(): Int {
-        return (generatedCoins.size + sentCoins.size - destroyedCoins.size)
+        return generatedCoins.size
     }
 
     /**
