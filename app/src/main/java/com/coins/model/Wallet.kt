@@ -92,11 +92,23 @@ data class Wallet(
 
     /**
      * Calculates the current value of the wallet.
+     * For a user's wallet, this is the number of coins they currently own (generated but not sent or destroyed).
+     * For a giver's perspective, use calculateGiverTotal() which includes generated + sent - destroyed.
      *
      * @return The current value in €.
      */
     fun calculateCurrentValue(): Int {
         return generatedCoins.size
+    }
+    
+    /**
+     * Calculates the total value for a giver (generated + sent - destroyed).
+     * This must be <= 25€ according to the business rules.
+     *
+     * @return The total value in €.
+     */
+    fun calculateGiverTotal(): Int {
+        return generatedCoins.size + sentCoins.size - destroyedCoins.size
     }
 
     /**

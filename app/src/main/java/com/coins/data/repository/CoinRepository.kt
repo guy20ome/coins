@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Very lightweight in‑memory repository – sufficient for the coin‑generation demo.
+ * Very lightweight in-memory repository - sufficient for the coin-generation demo.
  * It keeps a mutable list of coins and updates the balance (in whole euros).
  */
 class CoinRepository {

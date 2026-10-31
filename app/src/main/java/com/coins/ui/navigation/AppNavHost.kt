@@ -35,10 +35,18 @@ fun AppNavHost(navController: NavHostController, appContext: android.content.Con
             )
         }
         composable("send") {
-            // Placeholder for Send screen
+            com.coins.ui.screens.SendScreen(
+                navController = navController,
+                appContext = appContext,
+                viewModel = coinsViewModel,
+            )
         }
         composable("receiver") {
-            // Placeholder for Receiver screen
+            com.coins.ui.screens.ReceiveScreen(
+                navController = navController,
+                appContext = appContext,
+                viewModel = coinsViewModel,
+            )
         }
         composable("registration") {
             RegistrationScreen(
