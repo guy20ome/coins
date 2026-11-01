@@ -11,8 +11,8 @@ val PurpleGrey40 = Color(0xFF625b71)
 val Pink40 = Color(0xFF7D5260)
 
 // App theme colors matching standard palette
-val CoinsPrimary = Color(0xFF1B5E20)
-val CoinsPrimaryVariant = Color(0xFF2E7D32)
+val CoinsPrimary = Color(0xFF6750A4)
+val CoinsPrimaryVariant = Color(0xFF4F378B)
 val CoinsSecondary = Color(0xFFFFD54F) // Gold
 val CoinsSecondaryVariant = Color(0xFFFFC107)
 val CoinsBackground = Color(0xFFF5F5F5)

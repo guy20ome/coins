@@ -1,7 +1,6 @@
 package com.coins.ui.screens
 
 import android.Manifest
-import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -18,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.coins.data.PreferencesHelper
 import com.coins.location.LocationHelper
@@ -32,11 +30,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeScreen(
     navController: NavController,
-    appContext: Context,
     viewModel: CoinsViewModel,
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     
     // Collect flows
     var balance by remember { mutableStateOf(0) }

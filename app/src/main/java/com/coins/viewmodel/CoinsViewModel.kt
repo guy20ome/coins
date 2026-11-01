@@ -141,7 +141,7 @@ class CoinsViewModel(
      * @param receiverGps The GPS coordinate of the receiver
      * @return true if the coin was received successfully, false otherwise
      */
-    suspend fun receiveCoin(coin: Coin, receiverGps: String): Boolean {
+    fun receiveCoin(coin: Coin, receiverGps: String): Boolean {
         return try {
             // Validate geographical zone
             if (!coin.isWithin25Km(receiverGps)) {

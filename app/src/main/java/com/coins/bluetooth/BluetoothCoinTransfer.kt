@@ -23,8 +23,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.io.InputStream
-import java.io.OutputStream
 import java.util.UUID
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Bluetooth service UUID for coin transfer
@@ -164,7 +167,7 @@ class BluetoothCoinTransfer(private val context: Context) {
             serverSocket?.close()
             serverSocket = null
             _state.tryEmit(BluetoothState.Idle)
-        } catch (e: IOException) {
+        } catch (_: IOException) {
             // Ignore
         }
     }
@@ -478,10 +481,12 @@ class BluetoothCoinTransfer(private val context: Context) {
         val earthRadius = 6371.0 // Earth's radius in kilometers
         val dLat = Math.toRadians(lat2 - lat1)
         val dLon = Math.toRadians(lon2 - lon1)
-        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2)
-        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        val sinDLatOver2 = sin(dLat / 2)
+        val sinDLonOver2 = sin(dLon / 2)
+        val a = sinDLatOver2 * sinDLatOver2 +
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+                sinDLonOver2 * sinDLonOver2
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return earthRadius * c
     }
     

@@ -3,6 +3,10 @@ package com.coins.model
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.util.UUID
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Represents a virtual coin with a unique identifier and location-based validation.
@@ -30,7 +34,7 @@ data class Coin(
     fun generateCoinId(): String {
         val formattedTimestamp = formatTimestamp(timestamp)
         return if (fullName.isNotEmpty()) {
-            "${fullName}_${gpsCoordinate}_${formattedTimestamp}"
+            "${fullName}_${gpsCoordinate}_$formattedTimestamp"
         } else {
             coinId
         }
@@ -74,12 +78,12 @@ data class Coin(
         val earthRadius = 6371.0 // Earth's radius in kilometers
         val dLat = Math.toRadians(lat2 - lat1)
         val dLon = Math.toRadians(lon2 - lon1)
-        val sinDLatOver2 = Math.sin(dLat / 2)
-        val sinDLonOver2 = Math.sin(dLon / 2)
-        val cosLat1 = Math.cos(Math.toRadians(lat1))
-        val cosLat2 = Math.cos(Math.toRadians(lat2))
+        val sinDLatOver2 = sin(dLat / 2)
+        val sinDLonOver2 = sin(dLon / 2)
+        val cosLat1 = cos(Math.toRadians(lat1))
+        val cosLat2 = cos(Math.toRadians(lat2))
         val a = sinDLatOver2 * sinDLatOver2 + cosLat1 * cosLat2 * sinDLonOver2 * sinDLonOver2
-        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return earthRadius * c
     }
 

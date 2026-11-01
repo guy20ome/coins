@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,7 +22,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.coins.bluetooth.BluetoothCoinTransfer
 import com.coins.bluetooth.TransferResult
@@ -41,12 +40,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun SendScreen(
     navController: NavController,
-    appContext: Context,
     viewModel: CoinsViewModel,
 ) {
     val context = LocalContext.current
     var coins by remember { mutableStateOf(emptyList<Coin>()) }
-    var balance by remember { mutableStateOf(0) }
+    var balance by remember { mutableIntStateOf(0) }
     var availableCoins by rememberSaveable { mutableStateOf<List<Coin>>(emptyList()) }
     var selectedCoinIds by rememberSaveable { mutableStateOf(setOf<String>()) }
     var isScanning by rememberSaveable { mutableStateOf(false) }
@@ -217,7 +215,7 @@ fun SendScreen(
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(
-                            imageVector = Icons.Default.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
                         )
                     }
@@ -454,7 +452,7 @@ fun SendScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = if (gpsCoordinate.isNotEmpty()) gpsCoordinate else "Fetching location...",
+                            text = gpsCoordinate.ifEmpty { "Fetching location..." },
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -492,9 +490,9 @@ fun SendScreen(
                                 // Connection established, now send each selected coin
                                 selectedCoinIds.forEach { coinId ->
                                     val coin = coins.find { it.coinId == coinId || it.generateCoinId() == coinId }
-                                    if (coin != null) {
+                                    coin?.let { targetCoin ->
                                         bluetoothTransfer.sendCoin(
-                                            coin = coin,
+                                            coin = targetCoin,
                                             onSuccess = {
                                                 // Update UI on success
                                                 successMessage = "Successfully sent coin to ${selectedDevice?.name ?: "device"}"

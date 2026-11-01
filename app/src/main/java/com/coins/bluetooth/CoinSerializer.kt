@@ -59,7 +59,7 @@ class CoinSerializer {
                 receiverId = if (jsonObject.isNull("receiverId")) null else jsonObject.optString("receiverId"),
                 status = try {
                     CoinStatus.valueOf(jsonObject.optString("status", "GENERATED"))
-                } catch (e: IllegalArgumentException) {
+                } catch (_: IllegalArgumentException) {
                     CoinStatus.GENERATED
                 }
             )

@@ -27,28 +27,24 @@ fun AppNavHost(navController: NavHostController, appContext: android.content.Con
         composable("home") {
             HomeScreen(
                 navController = navController,
-                appContext = appContext,
                 viewModel = coinsViewModel,
             )
         }
         composable("giver") {
             GiverScreen(
                 navController = navController,
-                appContext = appContext,
                 viewModel = coinsViewModel,
             )
         }
         composable("send") {
             com.coins.ui.screens.SendScreen(
                 navController = navController,
-                appContext = appContext,
                 viewModel = coinsViewModel,
             )
         }
         composable("receiver") {
             com.coins.ui.screens.ReceiveScreen(
                 navController = navController,
-                appContext = appContext,
                 viewModel = coinsViewModel,
             )
         }
@@ -67,7 +63,6 @@ fun AppNavHost(navController: NavHostController, appContext: android.content.Con
         composable("settings") {
             com.coins.ui.screens.SettingsScreen(
                 navController = navController,
-                appContext = appContext,
             )
         }
     }

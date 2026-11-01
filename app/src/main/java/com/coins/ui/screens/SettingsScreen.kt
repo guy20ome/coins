@@ -1,6 +1,5 @@
 package com.coins.ui.screens
 
-import android.content.Context
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -20,7 +19,6 @@ import com.coins.ui.theme.CoinsPrimary
 @Composable
 fun SettingsScreen(
     navController: NavController,
-    appContext: Context,
 ) {
     val context = LocalContext.current
     val fullName = remember { PreferencesHelper.getFullName(context) }

@@ -14,13 +14,15 @@ import com.google.android.gms.tasks.CancellationTokenSource
 object LocationHelper {
 
     fun hasLocationPermission(context: Context): Boolean {
-        return ContextCompat.checkSelfPermission(
+        val fineGranted = ContextCompat.checkSelfPermission(
             context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED || ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_COARSE_LOCATION
+            Manifest.permission.ACCESS_FINE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
+        return fineGranted || coarseGranted
     }
 
     @SuppressLint("MissingPermission")
@@ -58,7 +60,7 @@ object LocationHelper {
             }.addOnFailureListener {
                 onLocationReceived(getLocationFromSystemManager(context))
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             onLocationReceived(getLocationFromSystemManager(context))
         }
     }
@@ -76,10 +78,10 @@ object LocationHelper {
                     bestLocation = loc
                 }
             }
-            if (bestLocation != null) {
-                return "${formatCoord(bestLocation.latitude)},${formatCoord(bestLocation.longitude)}"
+            bestLocation?.let {
+                return "${formatCoord(it.latitude)},${formatCoord(it.longitude)}"
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // ignore
         }
         return "0.0,0.0"

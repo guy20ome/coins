@@ -20,13 +20,11 @@ import com.coins.location.LocationHelper
 import com.coins.ui.theme.CoinsPrimary
 import com.coins.viewmodel.CoinsViewModel
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GiverScreen(
     navController: NavController,
-    appContext: Context,
     viewModel: CoinsViewModel,
 ) {
     val context = LocalContext.current

@@ -2,6 +2,7 @@ package com.coins.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 
 object PreferencesHelper {
     private const val PREF_NAME = "CoinsPrefs"
@@ -14,7 +15,7 @@ object PreferencesHelper {
     }
 
     fun setRegistered(context: Context, isRegistered: Boolean) {
-        getPreferences(context).edit().putBoolean(KEY_IS_REGISTERED, isRegistered).apply()
+        getPreferences(context).edit { putBoolean(KEY_IS_REGISTERED, isRegistered) }
     }
 
     fun isRegistered(context: Context): Boolean {
@@ -22,7 +23,7 @@ object PreferencesHelper {
     }
 
     fun setFullName(context: Context, fullName: String) {
-        getPreferences(context).edit().putString(KEY_FULL_NAME, fullName).apply()
+        getPreferences(context).edit { putString(KEY_FULL_NAME, fullName) }
     }
 
     fun getFullName(context: Context): String {
@@ -30,7 +31,7 @@ object PreferencesHelper {
     }
 
     fun setEmail(context: Context, email: String) {
-        getPreferences(context).edit().putString(KEY_EMAIL, email).apply()
+        getPreferences(context).edit { putString(KEY_EMAIL, email) }
     }
 
     fun getEmail(context: Context): String {

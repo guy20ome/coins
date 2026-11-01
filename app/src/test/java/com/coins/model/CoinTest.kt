@@ -93,7 +93,7 @@ class CoinTest {
     }
 
     @Test
-    fun testWalletSendCoin() {
+    fun testWalletSendCoin() = kotlinx.coroutines.runBlocking {
         val senderWallet = Wallet(
             userId = "SENDER123",
             fullName = "John Doe"
@@ -108,8 +108,10 @@ class CoinTest {
         val coin = senderWallet.generateCoin(parisGps, System.currentTimeMillis())
         assertNotNull(coin)
 
+        val context = android.content.ContextWrapper(null)
+
         // Transfer the coin to the receiver via BluetoothCoinTransfer
-        val transferSuccess = com.coins.bluetooth.BluetoothCoinTransfer().transferCoin(
+        val transferSuccess = com.coins.bluetooth.BluetoothCoinTransfer(context).transferCoin(
             senderWallet = senderWallet,
             receiverWallet = receiverWallet,
             coinId = coin!!.generateCoinId(),

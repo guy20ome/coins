@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,7 +22,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.coins.bluetooth.BluetoothCoinTransfer
 import com.coins.bluetooth.TransferResult
@@ -41,7 +40,6 @@ import kotlinx.coroutines.launch
 @Composable
 fun ReceiveScreen(
     navController: NavController,
-    appContext: Context,
     viewModel: CoinsViewModel,
 ) {
     val context = LocalContext.current
@@ -208,7 +206,7 @@ fun ReceiveScreen(
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(
-                            imageVector = Icons.Default.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
                         )
                     }
@@ -267,7 +265,7 @@ fun ReceiveScreen(
                         
                         // Filter coins received by this user
                         val receivedCoins = coins.filter { 
-                            it.receiverId == fullName && !it.isDestroyed
+                            (it.receiverId == fullName) && !it.isDestroyed
                         }
                         
                         if (receivedCoins.isEmpty()) {
@@ -425,7 +423,7 @@ fun ReceiveScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = if (gpsCoordinate.isNotEmpty()) gpsCoordinate else "Fetching location...",
+                            text = gpsCoordinate.ifEmpty { "Fetching location..." },
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
