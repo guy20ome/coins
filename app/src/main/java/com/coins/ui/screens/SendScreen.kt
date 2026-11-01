@@ -6,9 +6,9 @@ import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,11 +24,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.coins.bluetooth.BluetoothCoinTransfer
+import com.coins.bluetooth.TransferResult
 import com.coins.data.PreferencesHelper
 import com.coins.location.LocationHelper
 import com.coins.model.Coin
 import com.coins.ui.theme.CoinsPrimary
 import com.coins.viewmodel.CoinsViewModel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 /**
  * Screen for sending coins to other users via Bluetooth.
@@ -38,11 +42,11 @@ import com.coins.viewmodel.CoinsViewModel
 fun SendScreen(
     navController: NavController,
     appContext: Context,
-    viewModel: CoinsViewModel = viewModel(),
+    viewModel: CoinsViewModel,
 ) {
     val context = LocalContext.current
-    val coins by viewModel.coins.collectAsState()
-    val balance by viewModel.balance.collectAsState()
+    var coins by remember { mutableStateOf(emptyList<Coin>()) }
+    var balance by remember { mutableStateOf(0) }
     var availableCoins by rememberSaveable { mutableStateOf<List<Coin>>(emptyList()) }
     var selectedCoinIds by rememberSaveable { mutableStateOf(setOf<String>()) }
     var isScanning by rememberSaveable { mutableStateOf(false) }
@@ -54,21 +58,52 @@ fun SendScreen(
     val fullName = remember { PreferencesHelper.getFullName(context) }
     var gpsCoordinate by rememberSaveable { mutableStateOf("") }
     
+    // Bluetooth transfer instance
+    val bluetoothTransfer = remember { BluetoothCoinTransfer.create(context) }
+    
+    // Collect flows
+    LaunchedEffect(Unit) {
+        viewModel.coins.collectLatest { coinsList ->
+            coins = coinsList
+        }
+    }
+    
+    LaunchedEffect(Unit) {
+        viewModel.balance.collectLatest { balanceValue ->
+            balance = balanceValue
+        }
+    }
+    
     val snackbarHostState = remember { SnackbarHostState() }
     
     fun startBluetoothScan() {
         isScanning = true
         discoveredDevices = emptyList()
-        // TODO: Implement actual Bluetooth scanning
-        // For now, we'll simulate discovering devices
-        // In a real implementation, you would use:
-        // val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
-        // bluetoothAdapter.startDiscovery()
-        // and register a BroadcastReceiver for ACTION_DISCOVERY_FOUND
         
-        // Simulate finding some devices
-        isScanning = false
-        // This is a placeholder - real implementation would discover actual devices
+        // Use the new Bluetooth API
+        if (bluetoothTransfer.hasBluetoothPermissions()) {
+            if (bluetoothTransfer.isBluetoothEnabled()) {
+                // Start BLE scanning
+                bluetoothTransfer.startDiscovery(
+                    onDeviceDiscovered = { device ->
+                        // Add device to discovered list if not already present
+                        if (!discoveredDevices.any { it.address == device.address }) {
+                            discoveredDevices = discoveredDevices + device
+                        }
+                    },
+                    onError = { error ->
+                        errorMessage = error
+                        isScanning = false
+                    }
+                )
+            } else {
+                errorMessage = "Bluetooth is not enabled"
+                isScanning = false
+            }
+        } else {
+            errorMessage = "Bluetooth permissions required"
+            isScanning = false
+        }
     }
     
     // Bluetooth permissions
@@ -94,14 +129,14 @@ fun SendScreen(
     }
     
     fun checkAndRequestPermissions() {
-        val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
-        
-        if (bluetoothAdapter == null) {
+        // Use the new Bluetooth API
+        if (!bluetoothTransfer.isBluetoothAvailable()) {
             errorMessage = "Bluetooth not supported on this device"
             return
         }
         
-        if (!bluetoothAdapter.isEnabled) {
+        if (!bluetoothTransfer.isBluetoothEnabled()) {
+            // Request to enable Bluetooth
             val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                 context.startActivity(enableBtIntent)
@@ -111,18 +146,24 @@ fun SendScreen(
             return
         }
         
-        // Check Bluetooth permissions
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            bluetoothPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.BLUETOOTH_SCAN,
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                )
-            )
-        } else {
-            // For older Android versions, just start scanning
+        // Check and request Bluetooth permissions
+        if (bluetoothTransfer.hasBluetoothPermissions()) {
             startBluetoothScan()
+        } else {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                bluetoothPermissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.BLUETOOTH_SCAN,
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    )
+                )
+            } else {
+                // For older Android versions, we need location permission
+                bluetoothPermissionLauncher.launch(
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+                )
+            }
         }
     }
     
@@ -444,14 +485,35 @@ fun SendScreen(
                             return@Button
                         }
                         
-                        // TODO: Implement actual coin transfer via Bluetooth
-                        // For now, we'll just show a success message
-                        val coinCount = selectedCoinIds.size
-                        successMessage = "Successfully sent $coinCount coin(s) to ${selectedDevice?.name ?: "device"}"
-                        
-                        // Clear selection
-                        selectedCoinIds = emptySet()
-                        selectedDevice = null
+                        // Connect to the selected device and send coins
+                        bluetoothTransfer.connectToDevice(
+                            device = selectedDevice!!,
+                            onConnected = {
+                                // Connection established, now send each selected coin
+                                selectedCoinIds.forEach { coinId ->
+                                    val coin = coins.find { it.coinId == coinId || it.generateCoinId() == coinId }
+                                    if (coin != null) {
+                                        bluetoothTransfer.sendCoin(
+                                            coin = coin,
+                                            onSuccess = {
+                                                // Update UI on success
+                                                successMessage = "Successfully sent coin to ${selectedDevice?.name ?: "device"}"
+                                            },
+                                            onError = { error ->
+                                                errorMessage = "Failed to send coin: $error"
+                                            }
+                                        )
+                                    }
+                                }
+                                
+                                // Clear selection
+                                selectedCoinIds = emptySet()
+                                selectedDevice = null
+                            },
+                            onError = { error ->
+                                errorMessage = "Failed to connect: $error"
+                            }
+                        )
                     },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = selectedCoinIds.isNotEmpty() && selectedDevice != null && gpsCoordinate.isNotEmpty(),

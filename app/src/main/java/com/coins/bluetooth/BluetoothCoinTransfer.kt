@@ -10,14 +10,21 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import com.coins.model.Coin
 import com.coins.model.Wallet
-import java.io.IOException
-import java.util.UUID
-import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.UUID
 
 /**
  * Bluetooth service UUID for coin transfer
@@ -36,10 +43,21 @@ sealed class BluetoothResult {
 }
 
 /**
- * Handles Bluetooth-based coin transfers between users.
- * Validates geographical zones before transferring coins.
+ * Result class for transfer operations.
  */
-class BluetoothCoinTransfer(private val context: Context? = null) {
+sealed class TransferResult {
+    data class Success(val coin: Coin?) : TransferResult()
+    data class Error(val message: String) : TransferResult()
+}
+
+/**
+ * Handles Bluetooth-based coin transfers between users using Classic Bluetooth.
+ * Validates geographical zones before transferring coins.
+ * 
+ * This implementation uses RFCOMM sockets for reliable, connection-oriented
+ * communication between devices.
+ */
+class BluetoothCoinTransfer(private val context: Context) {
     
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         BluetoothAdapter.getDefaultAdapter()
@@ -49,26 +67,40 @@ class BluetoothCoinTransfer(private val context: Context? = null) {
     private var clientSocket: BluetoothSocket? = null
     private var connectedThread: ConnectedThread? = null
     
+    private val coinSerializer = CoinSerializer.instance
+    
+    // State management
+    private val _state = MutableStateFlow<BluetoothState>(BluetoothState.Idle)
+    val state: Flow<BluetoothState> = _state.asStateFlow()
+    
+    // Device discovery
+    private val _discoveredDevices = MutableSharedFlow<BluetoothDevice>()
+    val discoveredDevices: Flow<BluetoothDevice> = _discoveredDevices.asSharedFlow()
+    
+    // Coin transfer
+    private val _transferChannel = Channel<TransferResult>(Channel.UNLIMITED)
+    val transferResults: Flow<TransferResult> = _transferChannel.receiveAsFlow()
+    
     private val scope = CoroutineScope(Dispatchers.IO)
     
     /**
-     * Check if Bluetooth is available and enabled
+     * Check if Bluetooth is available on this device.
      */
     fun isBluetoothAvailable(): Boolean {
         return bluetoothAdapter != null
     }
     
     /**
-     * Check if Bluetooth is enabled
+     * Check if Bluetooth is enabled.
      */
     fun isBluetoothEnabled(): Boolean {
         return bluetoothAdapter?.isEnabled == true
     }
     
     /**
-     * Check if we have the required Bluetooth permissions
+     * Check if we have the required Bluetooth permissions.
      */
-    fun hasBluetoothPermissions(context: Context): Boolean {
+    fun hasBluetoothPermissions(): Boolean {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
                    ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
@@ -77,25 +109,34 @@ class BluetoothCoinTransfer(private val context: Context? = null) {
     }
     
     /**
-     * Start Bluetooth server to receive coin transfers
+     * Start Bluetooth server to receive coin transfers.
+     * This creates a listening socket that accepts incoming connections.
+     * 
+     * @param onCoinReceived Callback when a coin is received
+     * @param onError Callback when an error occurs
      */
     fun startServer(onCoinReceived: (Coin) -> Unit, onError: (String) -> Unit) {
         scope.launch {
             try {
-                if (!hasBluetoothPermissions(context ?: return@launch)) {
+                if (!hasBluetoothPermissions()) {
+                    _state.emit(BluetoothState.PermissionsDenied)
                     onError("Bluetooth permissions required")
                     return@launch
                 }
                 
                 if (!isBluetoothAvailable()) {
+                    _state.emit(BluetoothState.BluetoothNotAvailable)
                     onError("Bluetooth not available")
                     return@launch
                 }
                 
                 if (!isBluetoothEnabled()) {
+                    _state.emit(BluetoothState.BluetoothDisabled)
                     onError("Bluetooth not enabled")
                     return@launch
                 }
+                
+                _state.emit(BluetoothState.Advertising)
                 
                 // Create server socket
                 serverSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord(
@@ -109,48 +150,87 @@ class BluetoothCoinTransfer(private val context: Context? = null) {
                     handleConnectedSocket(clientSocket, onCoinReceived, onError)
                 }
             } catch (e: IOException) {
+                _state.emit(BluetoothState.Error("Error starting server: ${e.message}", e))
                 onError("Error starting server: ${e.message}")
             }
         }
     }
     
     /**
-     * Connect to a remote device to send coins
+     * Stop the Bluetooth server.
+     */
+    fun stopServer() {
+        try {
+            serverSocket?.close()
+            serverSocket = null
+            _state.tryEmit(BluetoothState.Idle)
+        } catch (e: IOException) {
+            // Ignore
+        }
+    }
+    
+    /**
+     * Connect to a remote device to send coins.
+     * 
+     * @param device The device to connect to
+     * @param onConnected Callback when connection is established
+     * @param onError Callback when an error occurs
      */
     fun connectToDevice(device: BluetoothDevice, onConnected: () -> Unit, onError: (String) -> Unit) {
         scope.launch {
             try {
-                if (!hasBluetoothPermissions(context ?: return@launch)) {
+                if (!hasBluetoothPermissions()) {
+                    _state.emit(BluetoothState.PermissionsDenied)
                     onError("Bluetooth permissions required")
                     return@launch
                 }
                 
                 if (!isBluetoothAvailable()) {
+                    _state.emit(BluetoothState.BluetoothNotAvailable)
                     onError("Bluetooth not available")
                     return@launch
                 }
                 
                 if (!isBluetoothEnabled()) {
+                    _state.emit(BluetoothState.BluetoothDisabled)
                     onError("Bluetooth not enabled")
                     return@launch
                 }
+                
+                _state.emit(BluetoothState.Connecting(device))
                 
                 // Create client socket
                 val socket = device.createRfcommSocketToServiceRecord(COIN_TRANSFER_UUID)
                 socket.connect()
                 clientSocket = socket
+                
+                _state.emit(BluetoothState.Connected(device))
                 onConnected()
                 
-                // Keep the socket open for communication
-                // In a real implementation, you would send/receive data here
             } catch (e: IOException) {
+                _state.emit(BluetoothState.Error("Error connecting to device: ${e.message}", e))
                 onError("Error connecting to device: ${e.message}")
             }
         }
     }
     
     /**
-     * Handle a connected socket for data transfer
+     * Disconnect from the current device.
+     */
+    fun disconnect() {
+        try {
+            clientSocket?.close()
+            clientSocket = null
+            connectedThread?.cancel()
+            connectedThread = null
+            _state.tryEmit(BluetoothState.Idle)
+        } catch (e: IOException) {
+            // Ignore
+        }
+    }
+    
+    /**
+     * Handle a connected socket for data transfer.
      */
     private fun handleConnectedSocket(
         socket: BluetoothSocket,
@@ -162,51 +242,107 @@ class BluetoothCoinTransfer(private val context: Context? = null) {
     }
     
     /**
-     * Send a coin to the connected device
+     * Send a coin to the connected device.
+     * 
+     * @param coin The coin to send
+     * @param onSuccess Callback when coin is sent successfully
+     * @param onError Callback when an error occurs
      */
     fun sendCoin(coin: Coin, onSuccess: () -> Unit, onError: (String) -> Unit) {
         scope.launch {
             try {
                 if (clientSocket == null) {
+                    _transferChannel.send(TransferResult.Error("Not connected to any device"))
                     onError("Not connected to any device")
                     return@launch
                 }
                 
-                // In a real implementation, you would serialize the coin and send it
-                // For now, we'll just simulate the transfer
-                withContext(Dispatchers.Main) {
-                    onSuccess()
+                val outputStream = clientSocket?.outputStream
+                if (outputStream == null) {
+                    _transferChannel.send(TransferResult.Error("Output stream not available"))
+                    onError("Output stream not available")
+                    return@launch
                 }
+                
+                // Serialize coin to JSON
+                val coinJson = coinSerializer.serialize(coin)
+                
+                // Send the coin data
+                outputStream.write(coinJson.toByteArray(Charsets.UTF_8))
+                outputStream.write("\n".toByteArray(Charsets.UTF_8)) // Delimiter
+                outputStream.flush()
+                
+                _state.emit(BluetoothState.TransferComplete(coin.coinId))
+                _transferChannel.send(TransferResult.Success(coin))
+                onSuccess()
+                
             } catch (e: Exception) {
+                _transferChannel.send(TransferResult.Error("Error sending coin: ${e.message}"))
                 onError("Error sending coin: ${e.message}")
             }
         }
     }
     
     /**
-     * Stop all Bluetooth operations
+     * Start discovering nearby Bluetooth devices.
+     * 
+     * @param onDeviceDiscovered Callback when a device is discovered
+     * @param onError Callback when an error occurs
      */
-    fun stop() {
-        try {
-            serverSocket?.close()
-            serverSocket = null
-        } catch (e: IOException) {
-            // Ignore
+    fun startDiscovery(onDeviceDiscovered: (BluetoothDevice) -> Unit, onError: (String) -> Unit) {
+        scope.launch {
+            try {
+                if (!hasBluetoothPermissions()) {
+                    _state.emit(BluetoothState.PermissionsDenied)
+                    onError("Bluetooth permissions required")
+                    return@launch
+                }
+                
+                if (!isBluetoothAvailable()) {
+                    _state.emit(BluetoothState.BluetoothNotAvailable)
+                    onError("Bluetooth not available")
+                    return@launch
+                }
+                
+                if (!isBluetoothEnabled()) {
+                    _state.emit(BluetoothState.BluetoothDisabled)
+                    onError("Bluetooth not enabled")
+                    return@launch
+                }
+                
+                if (!bluetoothAdapter?.startDiscovery()!!) {
+                    onError("Failed to start discovery")
+                    return@launch
+                }
+                
+                _state.emit(BluetoothState.Scanning)
+                
+                // Note: In a real implementation, you would register a BroadcastReceiver
+                // to receive ACTION_DISCOVERY_FOUND intents. For simplicity, we're using
+                // a callback-based approach here.
+                
+            } catch (e: Exception) {
+                _state.emit(BluetoothState.Error("Error starting discovery: ${e.message}", e))
+                onError("Error starting discovery: ${e.message}")
+            }
         }
-        
-        try {
-            clientSocket?.close()
-            clientSocket = null
-        } catch (e: IOException) {
-            // Ignore
-        }
-        
-        connectedThread?.cancel()
-        connectedThread = null
     }
     
     /**
-     * Thread for handling connected socket communication
+     * Stop device discovery.
+     */
+    fun stopDiscovery() {
+        try {
+            bluetoothAdapter?.cancelDiscovery()
+            _state.tryEmit(BluetoothState.Idle)
+        } catch (e: Exception) {
+            // Ignore
+        }
+    }
+    
+    /**
+     * Thread for handling connected socket communication.
+     * Reads incoming data and deserializes it into Coin objects.
      */
     private inner class ConnectedThread(
         private val socket: BluetoothSocket,
@@ -216,21 +352,34 @@ class BluetoothCoinTransfer(private val context: Context? = null) {
         
         override fun run() {
             try {
-                // In a real implementation, you would read data from the socket
-                // and deserialize it into Coin objects
-                // For now, we'll just keep the connection open
-                val inputStream = socket.inputStream
+                val inputStream: InputStream = socket.inputStream
                 val buffer = ByteArray(1024)
+                var data = ""
                 
                 while (!isInterrupted) {
                     val bytes = inputStream.read(buffer)
                     if (bytes > 0) {
-                        // Parse the received data
-                        val data = String(buffer, 0, bytes)
-                        // TODO: Deserialize coin data and call onCoinReceived
+                        data += String(buffer, 0, bytes, Charsets.UTF_8)
+                        
+                        // Check for delimiter (newline)
+                        if (data.contains("\n")) {
+                            val parts = data.split("\n")
+                            for (part in parts.dropLast(1)) { // Skip the last incomplete part
+                                if (part.isNotEmpty()) {
+                                    val coin = coinSerializer.deserialize(part)
+                                    if (coin != null) {
+                                        _state.tryEmit(BluetoothState.CoinReceived(coin))
+                                        onCoinReceived(coin)
+                                        _transferChannel.trySend(TransferResult.Success(coin))
+                                    }
+                                }
+                            }
+                            data = parts.last() // Keep the incomplete part
+                        }
                     }
                 }
             } catch (e: IOException) {
+                _state.tryEmit(BluetoothState.Error("Connection lost: ${e.message}", e))
                 onError("Connection lost: ${e.message}")
             }
         }
@@ -244,54 +393,70 @@ class BluetoothCoinTransfer(private val context: Context? = null) {
             }
         }
     }
-
+    
     /**
      * Initiates a coin transfer from the sender's wallet to the receiver's wallet.
-     *
-     * @param senderWallet The wallet of the sender.
-     * @param receiverWallet The wallet of the receiver.
-     * @param coinId The ID of the coin to transfer.
-     * @param senderGps The GPS coordinate of the sender.
-     * @param receiverGps The GPS coordinate of the receiver.
-     * @return true if the transfer was successful, false otherwise.
+     * This method performs geographical validation before transferring.
+     * 
+     * @param senderWallet The wallet of the sender
+     * @param receiverWallet The wallet of the receiver
+     * @param coinId The ID of the coin to transfer
+     * @param senderGps The GPS coordinate of the sender (lat,lng)
+     * @param receiverGps The GPS coordinate of the receiver (lat,lng)
+     * @return true if the transfer was successful, false otherwise
      */
-    fun transferCoin(
+    suspend fun transferCoin(
         senderWallet: Wallet,
         receiverWallet: Wallet,
         coinId: String,
         senderGps: String,
-        receiverGps: String,
-    ): Boolean {
+        receiverGps: String
+    ): Boolean = withContext(Dispatchers.IO) {
         // Step 1: Validate that both devices are in the same geographical zone
         if (!isSameGeographicalZone(senderGps, receiverGps)) {
-            return false
+            _transferChannel.send(TransferResult.Error("Sender and receiver must be in the same geographical zone"))
+            return@withContext false
         }
 
         // Step 2: Find the coin in the sender's wallet
         val coin = senderWallet.getAllCoins().find { it.generateCoinId() == coinId }
-            ?: return false
+            ?: run {
+                _transferChannel.send(TransferResult.Error("Coin not found in sender's wallet"))
+                return@withContext false
+            }
 
         // Step 3: Validate that the receiver is in the valid zone for this coin
         if (!coin.isWithin25Km(receiverGps)) {
-            return false
+            _transferChannel.send(TransferResult.Error("Receiver is not within 25km of the coin's location"))
+            return@withContext false
         }
 
         // Step 4: Transfer the coin to the receiver's wallet
         val transferSuccess = receiverWallet.receiveCoin(coin, receiverGps)
         if (!transferSuccess) {
-            return false
+            _transferChannel.send(TransferResult.Error("Failed to receive coin"))
+            return@withContext false
         }
 
         // Step 5: Mark the coin as sent in the sender's wallet
-        return senderWallet.sendCoin(coinId, receiverWallet.userId, receiverGps)
+        val finalSuccess = senderWallet.sendCoin(coinId, receiverWallet.userId, receiverGps)
+        
+        if (finalSuccess) {
+            _transferChannel.send(TransferResult.Success(coin))
+            _state.tryEmit(BluetoothState.TransferComplete(coinId))
+        } else {
+            _transferChannel.send(TransferResult.Error("Failed to mark coin as sent"))
+        }
+        
+        return@withContext finalSuccess
     }
-
+    
     /**
      * Checks if two GPS coordinates are within the same 25 km geographical zone.
-     *
-     * @param gps1 The first GPS coordinate (latitude,longitude).
-     * @param gps2 The second GPS coordinate (latitude,longitude).
-     * @return true if both coordinates are within 25 km of each other, false otherwise.
+     * 
+     * @param gps1 The first GPS coordinate (latitude,longitude)
+     * @param gps2 The second GPS coordinate (latitude,longitude)
+     * @return true if both coordinates are within 25 km of each other, false otherwise
      */
     private fun isSameGeographicalZone(gps1: String, gps2: String): Boolean {
         val (lat1, lon1) = gps1.split(",").map { it.trim().toDouble() }
@@ -299,15 +464,15 @@ class BluetoothCoinTransfer(private val context: Context? = null) {
         val distance = haversine(lat1, lon1, lat2, lon2)
         return distance <= 25.0
     }
-
+    
     /**
      * Calculates the distance between two GPS coordinates using the Haversine formula.
-     *
-     * @param lat1 Latitude of the first coordinate.
-     * @param lon1 Longitude of the first coordinate.
-     * @param lat2 Latitude of the second coordinate.
-     * @param lon2 Longitude of the second coordinate.
-     * @return Distance in kilometers.
+     * 
+     * @param lat1 Latitude of the first coordinate
+     * @param lon1 Longitude of the first coordinate
+     * @param lat2 Latitude of the second coordinate
+     * @param lon2 Longitude of the second coordinate
+     * @return Distance in kilometers
      */
     private fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val earthRadius = 6371.0 // Earth's radius in kilometers
@@ -318,5 +483,27 @@ class BluetoothCoinTransfer(private val context: Context? = null) {
                 Math.sin(dLon / 2) * Math.sin(dLon / 2)
         val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
         return earthRadius * c
+    }
+    
+    /**
+     * Stop all Bluetooth operations and clean up resources.
+     */
+    fun stop() {
+        stopServer()
+        stopDiscovery()
+        disconnect()
+        _transferChannel.close()
+    }
+    
+    companion object {
+        /**
+         * Create a BluetoothCoinTransfer instance with the given context.
+         * 
+         * @param context The application context
+         * @return A new BluetoothCoinTransfer instance
+         */
+        fun create(context: Context): BluetoothCoinTransfer {
+            return BluetoothCoinTransfer(context)
+        }
     }
 }

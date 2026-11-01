@@ -25,22 +25,41 @@ import com.coins.location.LocationHelper
 import com.coins.model.Coin
 import com.coins.ui.theme.CoinsPrimary
 import com.coins.viewmodel.CoinsViewModel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     navController: NavController,
     appContext: Context,
-    viewModel: CoinsViewModel = viewModel(),
+    viewModel: CoinsViewModel,
 ) {
     val context = LocalContext.current
-    val balance by viewModel.balance.collectAsState()
+    val scope = rememberCoroutineScope()
+    
+    // Collect flows
+    var balance by remember { mutableStateOf(0) }
+    var coins by remember { mutableStateOf(emptyList<Coin>()) }
     val error by viewModel.error.collectAsState()
+    
     var showDialog by rememberSaveable { mutableStateOf(value = false) }
     var coinCountInput by rememberSaveable { mutableStateOf("") }
     var gpsCoordinateInput by rememberSaveable { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
-    val coins by viewModel.coins.collectAsState()
+    
+    // Collect flows
+    LaunchedEffect(Unit) {
+        viewModel.balance.collectLatest { balanceValue ->
+            balance = balanceValue
+        }
+    }
+    
+    LaunchedEffect(Unit) {
+        viewModel.coins.collectLatest { coinsList ->
+            coins = coinsList
+        }
+    }
     
     // Get the stored full name
     val fullName = remember { PreferencesHelper.getFullName(context) }
@@ -209,7 +228,8 @@ fun HomeScreen(
                         val success = viewModel.generateCoins(
                             count = count,
                             fullName = fullName,
-                            gpsCoordinate = gpsCoordinateInput.trim()
+                            gpsCoordinate = gpsCoordinateInput.trim(),
+                            userId = fullName
                         )
                         if (success) {
                             showDialog = false

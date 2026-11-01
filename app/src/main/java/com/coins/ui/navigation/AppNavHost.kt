@@ -13,7 +13,11 @@ import com.coins.viewmodel.CoinsViewModel
 
 @Composable
 fun AppNavHost(navController: NavHostController, appContext: android.content.Context) {
-    val coinsViewModel: CoinsViewModel = viewModel()
+    // Create ViewModel with context for database access
+    val coinsViewModel: CoinsViewModel = viewModel {
+        CoinsViewModel.create(appContext)
+    }
+    
     val startDestination = if (PreferencesHelper.isRegistered(appContext)) "home" else "registration"
 
     NavHost(

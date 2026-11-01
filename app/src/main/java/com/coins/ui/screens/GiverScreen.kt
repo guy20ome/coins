@@ -14,26 +14,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.coins.data.PreferencesHelper
 import com.coins.location.LocationHelper
 import com.coins.ui.theme.CoinsPrimary
 import com.coins.viewmodel.CoinsViewModel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GiverScreen(
     navController: NavController,
     appContext: Context,
-    viewModel: CoinsViewModel = viewModel(),
+    viewModel: CoinsViewModel,
 ) {
     val context = LocalContext.current
-    val balance by viewModel.balance.collectAsState()
+    var balance by remember { mutableStateOf(0) }
     val error by viewModel.error.collectAsState()
     var coinCountInput by rememberSaveable { mutableStateOf("") }
     var gpsCoordinateInput by rememberSaveable { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
+    
+    // Collect balance
+    LaunchedEffect(Unit) {
+        viewModel.balance.collectLatest { balanceValue ->
+            balance = balanceValue
+        }
+    }
     
     // Get the stored full name
     val fullName = remember { PreferencesHelper.getFullName(context) }
@@ -125,7 +133,8 @@ fun GiverScreen(
                         val success = viewModel.generateCoins(
                             count = count,
                             fullName = fullName,
-                            gpsCoordinate = gpsCoordinateInput.trim()
+                            gpsCoordinate = gpsCoordinateInput.trim(),
+                            userId = fullName
                         )
                         if (success) {
                             coinCountInput = ""

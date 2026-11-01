@@ -24,11 +24,15 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.coins.bluetooth.BluetoothCoinTransfer
+import com.coins.bluetooth.TransferResult
 import com.coins.data.PreferencesHelper
 import com.coins.location.LocationHelper
 import com.coins.model.Coin
 import com.coins.ui.theme.CoinsPrimary
 import com.coins.viewmodel.CoinsViewModel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 /**
  * Screen for receiving coins from other users via Bluetooth.
@@ -38,11 +42,11 @@ import com.coins.viewmodel.CoinsViewModel
 fun ReceiveScreen(
     navController: NavController,
     appContext: Context,
-    viewModel: CoinsViewModel = viewModel(),
+    viewModel: CoinsViewModel,
 ) {
     val context = LocalContext.current
-    val coins by viewModel.coins.collectAsState()
-    val balance by viewModel.balance.collectAsState()
+    var coins by remember { mutableStateOf(emptyList<Coin>()) }
+    var balance by remember { mutableStateOf(0) }
     var isScanning by rememberSaveable { mutableStateOf(false) }
     var discoveredDevices by rememberSaveable { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
     var selectedDevice by rememberSaveable { mutableStateOf<BluetoothDevice?>(null) }
@@ -52,17 +56,52 @@ fun ReceiveScreen(
     val fullName = remember { PreferencesHelper.getFullName(context) }
     var gpsCoordinate by rememberSaveable { mutableStateOf("") }
     
+    // Bluetooth transfer instance
+    val bluetoothTransfer = remember { BluetoothCoinTransfer.create(context) }
+    
+    // Collect flows
+    LaunchedEffect(Unit) {
+        viewModel.coins.collectLatest { coinsList ->
+            coins = coinsList
+        }
+    }
+    
+    LaunchedEffect(Unit) {
+        viewModel.balance.collectLatest { balanceValue ->
+            balance = balanceValue
+        }
+    }
+    
     val snackbarHostState = remember { SnackbarHostState() }
     
     fun startBluetoothScan() {
         isScanning = true
         discoveredDevices = emptyList()
-        // TODO: Implement actual Bluetooth scanning for receivers
-        // For now, we'll simulate discovering devices
         
-        // Simulate finding some devices
-        isScanning = false
-        // This is a placeholder - real implementation would discover actual devices
+        // Use the new Bluetooth API
+        if (bluetoothTransfer.hasBluetoothPermissions()) {
+            if (bluetoothTransfer.isBluetoothEnabled()) {
+                // Start BLE scanning
+                bluetoothTransfer.startDiscovery(
+                    onDeviceDiscovered = { device ->
+                        // Add device to discovered list if not already present
+                        if (!discoveredDevices.any { it.address == device.address }) {
+                            discoveredDevices = discoveredDevices + device
+                        }
+                    },
+                    onError = { error ->
+                        errorMessage = error
+                        isScanning = false
+                    }
+                )
+            } else {
+                errorMessage = "Bluetooth is not enabled"
+                isScanning = false
+            }
+        } else {
+            errorMessage = "Bluetooth permissions required"
+            isScanning = false
+        }
     }
     
     // Bluetooth permissions
@@ -88,14 +127,14 @@ fun ReceiveScreen(
     }
     
     fun checkAndRequestPermissions() {
-        val bluetoothAdapter = BluetoothAdapter.getDefaultAdapter()
-        
-        if (bluetoothAdapter == null) {
+        // Use the new Bluetooth API
+        if (!bluetoothTransfer.isBluetoothAvailable()) {
             errorMessage = "Bluetooth not supported on this device"
             return
         }
         
-        if (!bluetoothAdapter.isEnabled) {
+        if (!bluetoothTransfer.isBluetoothEnabled()) {
+            // Request to enable Bluetooth
             val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                 context.startActivity(enableBtIntent)
@@ -105,17 +144,24 @@ fun ReceiveScreen(
             return
         }
         
-        // Check Bluetooth permissions
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            bluetoothPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.BLUETOOTH_SCAN,
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                )
-            )
-        } else {
+        // Check and request Bluetooth permissions
+        if (bluetoothTransfer.hasBluetoothPermissions()) {
             startBluetoothScan()
+        } else {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                bluetoothPermissionLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.BLUETOOTH_SCAN,
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                        Manifest.permission.ACCESS_FINE_LOCATION
+                    )
+                )
+            } else {
+                // For older Android versions, we need location permission
+                bluetoothPermissionLauncher.launch(
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+                )
+            }
         }
     }
     
@@ -400,29 +446,37 @@ fun ReceiveScreen(
                 
                 Spacer(modifier = Modifier.weight(1f))
                 
-                // Receive button
+                // Receive button - Start server to receive coins
                 Button(
                     onClick = {
-                        if (selectedDevice == null) {
-                            errorMessage = "Please select a sender device"
-                            return@Button
-                        }
                         if (gpsCoordinate.isEmpty()) {
                             errorMessage = "Please wait for location to be fetched"
                             return@Button
                         }
                         
-                        // TODO: Implement actual coin receiving via Bluetooth
-                        // For now, we'll just show a success message
-                        successMessage = "Ready to receive coins from ${selectedDevice?.name ?: "sender"}"
+                        // Start Bluetooth server to receive coins
+                        bluetoothTransfer.startServer(
+                            onCoinReceived = { coin ->
+                                // Validate the coin's geographical zone
+                                if (coin.isWithin25Km(gpsCoordinate)) {
+                                    // Coin is valid, add it to the wallet
+                                    // In a real implementation, you would update the ViewModel
+                                    successMessage = "Received coin: ${coin.generateCoinId()}"
+                                } else {
+                                    errorMessage = "Coin rejected: Not in your geographical zone"
+                                }
+                            },
+                            onError = { error ->
+                                errorMessage = "Server error: $error"
+                            }
+                        )
                         
-                        // Clear selection
-                        selectedDevice = null
+                        successMessage = "Server started. Waiting for coins..."
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = selectedDevice != null && gpsCoordinate.isNotEmpty(),
+                    enabled = gpsCoordinate.isNotEmpty(),
                 ) {
-                    Text("Receive Coins")
+                    Text("Start Receiving")
                 }
             }
         },
