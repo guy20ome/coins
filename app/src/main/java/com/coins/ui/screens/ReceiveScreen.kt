@@ -50,32 +50,32 @@ fun ReceiveScreen(
     var selectedDevice by rememberSaveable { mutableStateOf<BluetoothDevice?>(null) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var successMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    
+
     val fullName = remember { PreferencesHelper.getFullName(context) }
     var gpsCoordinate by rememberSaveable { mutableStateOf("") }
-    
+
     // Bluetooth transfer instance
     val bluetoothTransfer = remember { BluetoothCoinTransfer.create(context) }
-    
+
     // Collect flows
     LaunchedEffect(Unit) {
         viewModel.coins.collectLatest { coinsList ->
             coins = coinsList
         }
     }
-    
+
     LaunchedEffect(Unit) {
         viewModel.balance.collectLatest { balanceValue ->
             balance = balanceValue
         }
     }
-    
+
     val snackbarHostState = remember { SnackbarHostState() }
-    
+
     fun startBluetoothScan() {
         isScanning = true
         discoveredDevices = emptyList()
-        
+
         // Use the new Bluetooth API
         if (bluetoothTransfer.hasBluetoothPermissions()) {
             if (bluetoothTransfer.isBluetoothEnabled()) {
@@ -101,7 +101,7 @@ fun ReceiveScreen(
             isScanning = false
         }
     }
-    
+
     // Bluetooth permissions
     val bluetoothPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -112,7 +112,7 @@ fun ReceiveScreen(
             errorMessage = "Bluetooth permissions required to scan for devices"
         }
     }
-    
+
     // Location permissions
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -123,14 +123,14 @@ fun ReceiveScreen(
             }
         }
     }
-    
+
     fun checkAndRequestPermissions() {
         // Use the new Bluetooth API
         if (!bluetoothTransfer.isBluetoothAvailable()) {
             errorMessage = "Bluetooth not supported on this device"
             return
         }
-        
+
         if (!bluetoothTransfer.isBluetoothEnabled()) {
             // Request to enable Bluetooth
             val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
@@ -141,7 +141,7 @@ fun ReceiveScreen(
             }
             return
         }
-        
+
         // Check and request Bluetooth permissions
         if (bluetoothTransfer.hasBluetoothPermissions()) {
             startBluetoothScan()
@@ -162,7 +162,7 @@ fun ReceiveScreen(
             }
         }
     }
-    
+
     fun fetchDeviceLocation() {
         if (LocationHelper.hasLocationPermission(context)) {
             LocationHelper.getCurrentLocation(context) { loc ->
@@ -177,12 +177,12 @@ fun ReceiveScreen(
             )
         }
     }
-    
+
     // Fetch location on startup
     LaunchedEffect(Unit) {
         fetchDeviceLocation()
     }
-    
+
     // Show error messages
     LaunchedEffect(errorMessage) {
         errorMessage?.let {
@@ -190,7 +190,7 @@ fun ReceiveScreen(
             errorMessage = null
         }
     }
-    
+
     // Show success messages
     LaunchedEffect(successMessage) {
         successMessage?.let {
@@ -198,7 +198,7 @@ fun ReceiveScreen(
             successMessage = null
         }
     }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -247,7 +247,7 @@ fun ReceiveScreen(
                         )
                     }
                 }
-                
+
                 // Received coins list
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -262,12 +262,12 @@ fun ReceiveScreen(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        
+
                         // Filter coins received by this user
-                        val receivedCoins = coins.filter { 
+                        val receivedCoins = coins.filter {
                             (it.receiverId == fullName) && !it.isDestroyed
                         }
-                        
+
                         if (receivedCoins.isEmpty()) {
                             Text(
                                 text = "No coins received yet",
@@ -307,6 +307,24 @@ fun ReceiveScreen(
                                                 text = "Location: ${coin.gpsCoordinate}",
                                                 style = MaterialTheme.typography.bodySmall,
                                             )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            val composeScope = rememberCoroutineScope()
+                                            Button(
+                                                onClick = {
+                                                    composeScope.launch {
+                                                        val success = viewModel.destroyCoin(coin.coinId)
+                                                        if (success) {
+                                                            successMessage = "Coin destroyed: ${coin.generateCoinId()} (bank transfer will be initiated to Giver)"
+                                                        }
+                                                    }
+                                                },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.error
+                                                ),
+                                            ) {
+                                                Text("Destroy Coin (Cash Out)")
+                                            }
                                         }
                                     }
                                 }
@@ -314,7 +332,7 @@ fun ReceiveScreen(
                         }
                     }
                 }
-                
+
                 // Bluetooth device selection for receiving
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -329,7 +347,7 @@ fun ReceiveScreen(
                             style = MaterialTheme.typography.titleMedium,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        
+
                         if (discoveredDevices.isEmpty() && !isScanning) {
                             Text(
                                 text = "No devices discovered yet",
@@ -392,7 +410,7 @@ fun ReceiveScreen(
                                 }
                             }
                         }
-                        
+
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = { checkAndRequestPermissions() },
@@ -407,7 +425,7 @@ fun ReceiveScreen(
                         }
                     }
                 }
-                
+
                 // Current location
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -441,9 +459,9 @@ fun ReceiveScreen(
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.weight(1f))
-                
+
                 // Receive button - Start server to receive coins
                 Button(
                     onClick = {
@@ -451,7 +469,7 @@ fun ReceiveScreen(
                             errorMessage = "Please wait for location to be fetched"
                             return@Button
                         }
-                        
+
                         // Start Bluetooth server to receive coins
                         bluetoothTransfer.startServer(
                             onCoinReceived = { coin ->
@@ -468,7 +486,7 @@ fun ReceiveScreen(
                                 errorMessage = "Server error: $error"
                             }
                         )
-                        
+
                         successMessage = "Server started. Waiting for coins..."
                     },
                     modifier = Modifier.fillMaxWidth(),

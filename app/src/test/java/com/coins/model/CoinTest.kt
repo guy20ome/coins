@@ -16,12 +16,15 @@ class CoinTest {
         val fullName = "John Doe"
         val gpsCoordinate = "48.8566,2.3522"
         val timestamp = System.currentTimeMillis()
+        val giverId = "GIVER123"
+        val receiverId = "RECEIVER456"
 
         val coin = Coin(
             fullName = fullName,
             gpsCoordinate = gpsCoordinate,
             timestamp = timestamp,
-            giverId = "GIVER123"
+            giverId = giverId,
+            receiverId = receiverId
         )
 
         val coinId = coin.generateCoinId()
@@ -30,8 +33,10 @@ class CoinTest {
         // Check that the timestamp is formatted as YYYYMMDDHHMMSS (14 digits)
         val timestampPattern = "\\d{14}".toRegex()
         assertTrue("Coin ID should contain 14-digit timestamp", timestampPattern.containsMatchIn(coinId))
-        // Check that it does NOT contain giverId or receiverId
-        assertFalse("Coin ID should not contain giverId", coinId.contains("GIVER123"))
+        // Check that it contains giverId
+        assertTrue("Coin ID should contain giverId", coinId.contains(giverId))
+        // Check that it contains receiverId
+        assertTrue("Coin ID should contain receiverId", coinId.contains(receiverId))
     }
 
     @Test

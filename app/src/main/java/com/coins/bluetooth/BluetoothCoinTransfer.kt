@@ -5,7 +5,10 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import com.coins.model.Coin
@@ -288,10 +291,12 @@ class BluetoothCoinTransfer(private val context: Context) {
     
     /**
      * Start discovering nearby Bluetooth devices.
-     * 
+     *
      * @param onDeviceDiscovered Callback when a device is discovered
      * @param onError Callback when an error occurs
      */
+    private var discoveryReceiver: BroadcastReceiver? = null
+
     fun startDiscovery(onDeviceDiscovered: (BluetoothDevice) -> Unit, onError: (String) -> Unit) {
         scope.launch {
             try {
@@ -300,30 +305,47 @@ class BluetoothCoinTransfer(private val context: Context) {
                     onError("Bluetooth permissions required")
                     return@launch
                 }
-                
+
                 if (!isBluetoothAvailable()) {
                     _state.emit(BluetoothState.BluetoothNotAvailable)
                     onError("Bluetooth not available")
                     return@launch
                 }
-                
+
                 if (!isBluetoothEnabled()) {
                     _state.emit(BluetoothState.BluetoothDisabled)
                     onError("Bluetooth not enabled")
                     return@launch
                 }
-                
+
                 if (!bluetoothAdapter?.startDiscovery()!!) {
                     onError("Failed to start discovery")
                     return@launch
                 }
-                
+
                 _state.emit(BluetoothState.Scanning)
-                
-                // Note: In a real implementation, you would register a BroadcastReceiver
-                // to receive ACTION_DISCOVERY_FOUND intents. For simplicity, we're using
-                // a callback-based approach here.
-                
+
+                // Register IntentFilter for ACTION_FOUND to discover devices
+                val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
+                discoveryReceiver = object : BroadcastReceiver() {
+                    override fun onReceive(context: Context?, intent: Intent) {
+                        val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE) as BluetoothDevice?
+                        device?.let {
+                            _discoveredDevices.tryEmit(it)
+                            onDeviceDiscovered(it)
+                        }
+                    }
+                }
+                context.registerReceiver(discoveryReceiver, filter)
+
+                // Also register for discovery ended
+                val filter2 = IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+                context.registerReceiver(object : BroadcastReceiver() {
+                    override fun onReceive(context: Context?, intent: Intent) {
+                        _state.tryEmit(BluetoothState.Idle)
+                    }
+                }, filter2)
+
             } catch (e: Exception) {
                 _state.emit(BluetoothState.Error("Error starting discovery: ${e.message}", e))
                 onError("Error starting discovery: ${e.message}")
@@ -337,6 +359,15 @@ class BluetoothCoinTransfer(private val context: Context) {
     fun stopDiscovery() {
         try {
             bluetoothAdapter?.cancelDiscovery()
+            // Unregister the discovery receiver if it was registered
+            discoveryReceiver?.let { receiver ->
+                try {
+                    context.unregisterReceiver(receiver)
+                } catch (e: IllegalArgumentException) {
+                    // Receiver was not registered
+                }
+            }
+            discoveryReceiver = null
             _state.tryEmit(BluetoothState.Idle)
         } catch (e: Exception) {
             // Ignore

@@ -29,12 +29,12 @@ data class Coin(
 
     /**
      * Generates a unique coin ID in a readable format.
-     * Format: <fullName>_<gpsCoordinate>_<YYYYMMDDHHMMSS>
+     * Format: <fullName>_<gpsCoordinate>_<YYYYMMDDHHMMSS>_<giverId>_<receiverId>
      */
     fun generateCoinId(): String {
         val formattedTimestamp = formatTimestamp(timestamp)
         return if (fullName.isNotEmpty()) {
-            "${fullName}_${gpsCoordinate}_$formattedTimestamp"
+            "${fullName}_${gpsCoordinate}_${formattedTimestamp}_${giverId}_${receiverId ?: ""}"
         } else {
             coinId
         }
