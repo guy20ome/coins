@@ -46,6 +46,18 @@ val COIN_TRANSFER_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B
 private const val TAG = "BluetoothCoinTransfer"
 private const val CONNECTION_TIMEOUT_MS = 30000L // 30 seconds
 private const val MAX_MESSAGE_SIZE = 1024 * 10 // 10KB
+private const val HANDSHAKE_TIMEOUT_MS = 10000L // 10 seconds for handshake
+private const val ACK_TIMEOUT_MS = 5000L // 5 seconds for acknowledgment
+
+/**
+ * Protocol message types
+ */
+private const val MESSAGE_TYPE_HANDSHAKE = "HANDSHAKE"
+private const val MESSAGE_TYPE_HANDSHAKE_RESPONSE = "HANDSHAKE_OK"
+private const val MESSAGE_TYPE_ACK = "ACK"
+private const val MESSAGE_TYPE_NACK = "NACK"
+private const val MESSAGE_TYPE_COIN = "COIN"
+private const val MESSAGE_DELIMITER = "\n"
 
 /**
  * Result class for Bluetooth operations
@@ -64,6 +76,17 @@ sealed class BluetoothResult {
 sealed class TransferResult {
     data class Success(val coin: Coin?) : TransferResult()
     data class Error(val message: String) : TransferResult()
+}
+
+/**
+ * Internal message types for the protocol
+ */
+private sealed class ProtocolMessage {
+    data class Handshake(val appName: String = "CoinTransfer") : ProtocolMessage()
+    data class HandshakeResponse(val version: String = "1.0") : ProtocolMessage()
+    data class Acknowledgment(val messageId: String) : ProtocolMessage()
+    data class NegativeAcknowledgment(val messageId: String, val reason: String) : ProtocolMessage()
+    data class CoinMessage(val coin: Coin) : ProtocolMessage()
 }
 
 /**
@@ -90,6 +113,53 @@ class BluetoothCoinTransfer(private val context: Context) {
     
     // Track discovered devices to avoid duplicates
     private val discoveredDevicesSet = mutableSetOf<String>()
+    
+    // Message ID counter for tracking
+    private var messageCounter = 0
+    
+    /**
+     * Generate a unique message ID
+     */
+    private fun generateMessageId(): String {
+        return "msg_${System.currentTimeMillis()}_${++messageCounter}"
+    }
+    
+    /**
+     * Serialize a protocol message to string
+     */
+    private fun serializeProtocolMessage(message: ProtocolMessage): String {
+        return when (message) {
+            is ProtocolMessage.Handshake -> "$MESSAGE_TYPE_HANDSHAKE:${message.appName}"
+            is ProtocolMessage.HandshakeResponse -> "$MESSAGE_TYPE_HANDSHAKE_RESPONSE:${message.version}"
+            is ProtocolMessage.Acknowledgment -> "$MESSAGE_TYPE_ACK:${message.messageId}"
+            is ProtocolMessage.NegativeAcknowledgment -> "$MESSAGE_TYPE_NACK:${message.messageId}:${message.reason}"
+            is ProtocolMessage.CoinMessage -> "$MESSAGE_TYPE_COIN:${coinSerializer.serialize(message.coin)}"
+        }
+    }
+    
+    /**
+     * Parse a protocol message from string
+     */
+    private fun parseProtocolMessage(message: String): ProtocolMessage? {
+        return try {
+            val parts = message.split(":", limit = 3)
+            when (parts[0]) {
+                MESSAGE_TYPE_HANDSHAKE -> ProtocolMessage.Handshake(parts.getOrElse(1) { "CoinTransfer" })
+                MESSAGE_TYPE_HANDSHAKE_RESPONSE -> ProtocolMessage.HandshakeResponse(parts.getOrElse(1) { "1.0" })
+                MESSAGE_TYPE_ACK -> ProtocolMessage.Acknowledgment(parts[1])
+                MESSAGE_TYPE_NACK -> ProtocolMessage.NegativeAcknowledgment(parts[1], parts.getOrElse(2) { "Unknown error" })
+                MESSAGE_TYPE_COIN -> {
+                    val coinJson = parts.drop(1).joinToString(":")
+                    val coin = coinSerializer.deserialize(coinJson)
+                    if (coin != null) ProtocolMessage.CoinMessage(coin) else null
+                }
+                else -> null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing protocol message", e)
+            null
+        }
+    }
     
     // State management
     private val _state = MutableStateFlow<BluetoothState>(BluetoothState.Idle)
@@ -299,9 +369,10 @@ class BluetoothCoinTransfer(private val context: Context) {
     
     /**
      * Send a coin to the connected device.
+     * Uses protocol with ACK/NACK for reliable delivery.
      * 
      * @param coin The coin to send
-     * @param onSuccess Callback when coin is sent successfully
+     * @param onSuccess Callback when coin is sent and acknowledged
      * @param onError Callback when an error occurs
      */
     fun sendCoin(coin: Coin, onSuccess: () -> Unit, onError: (String) -> Unit) {
@@ -313,26 +384,58 @@ class BluetoothCoinTransfer(private val context: Context) {
                     return@launch
                 }
                 
-                val outputStream = clientSocket?.outputStream
-                if (outputStream == null) {
-                    _transferChannel.send(TransferResult.Error("Output stream not available"))
-                    onError("Output stream not available")
+                if (connectedThread == null) {
+                    _transferChannel.send(TransferResult.Error("No active connection thread"))
+                    onError("No active connection thread")
                     return@launch
                 }
                 
-                // Serialize coin to JSON
-                val coinJson = coinSerializer.serialize(coin)
+                // Validate coin before sending
+                if (coin.coinId.isEmpty() || coin.giverId.isEmpty()) {
+                    _transferChannel.send(TransferResult.Error("Invalid coin data"))
+                    onError("Invalid coin data")
+                    return@launch
+                }
                 
-                // Send the coin data
-                outputStream.write(coinJson.toByteArray(Charsets.UTF_8))
-                outputStream.write("\n".toByteArray(Charsets.UTF_8)) // Delimiter
-                outputStream.flush()
+                Log.d(TAG, "Sending coin with protocol: ${coin.coinId}")
+                _state.emit(BluetoothState.Transferring(coin.coinId, 0))
                 
-                _state.emit(BluetoothState.TransferComplete(coin.coinId))
-                _transferChannel.send(TransferResult.Success(coin))
-                onSuccess()
+                // Send coin with protocol and wait for ACK
+                val messageId = generateMessageId()
+                
+                // Use a channel to wait for ACK/NACK
+                val ackChannel = Channel<Pair<Boolean, String?>>(Channel.UNLIMITED)
+                
+                // Register callback with connected thread
+                connectedThread?.sendCoinMessage(coin) { success, errorMessage ->
+                    scope.launch {
+                        ackChannel.send(success to errorMessage)
+                    }
+                }
+                
+                // Wait for ACK/NACK with timeout
+                try {
+                    withTimeout(ACK_TIMEOUT_MS) {
+                        val (success, errorMessage) = ackChannel.receive()
+                        if (success) {
+                            Log.d(TAG, "Coin acknowledged: ${coin.coinId}")
+                            _state.emit(BluetoothState.TransferComplete(coin.coinId))
+                            _transferChannel.send(TransferResult.Success(coin))
+                            onSuccess()
+                        } else {
+                            Log.e(TAG, "Coin rejected: ${coin.coinId}, reason: $errorMessage")
+                            _transferChannel.send(TransferResult.Error(errorMessage ?: "Transfer rejected"))
+                            onError(errorMessage ?: "Transfer rejected")
+                        }
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    Log.e(TAG, "ACK timeout for coin: ${coin.coinId}")
+                    _transferChannel.send(TransferResult.Error("Transfer timeout: No acknowledgment received"))
+                    onError("Transfer timeout: No acknowledgment received after ${ACK_TIMEOUT_MS}ms")
+                }
                 
             } catch (e: Exception) {
+                Log.e(TAG, "Error sending coin", e)
                 _transferChannel.send(TransferResult.Error("Error sending coin: ${e.message}"))
                 onError("Error sending coin: ${e.message}")
             }
@@ -458,7 +561,7 @@ class BluetoothCoinTransfer(private val context: Context) {
     
     /**
      * Thread for handling connected socket communication.
-     * Reads incoming data and deserializes it into Coin objects.
+     * Implements handshake protocol and message acknowledgment.
      */
     private inner class ConnectedThread(
         private val socket: BluetoothSocket,
@@ -468,15 +571,33 @@ class BluetoothCoinTransfer(private val context: Context) {
         
         private var isRunning = true
         private var inputStream: InputStream? = null
+        private var outputStream: java.io.OutputStream? = null
+        private var handshakeComplete = false
+        private var isSender = false
+        
+        // Map of message IDs to callbacks for ACK/NACK
+        private val pendingAcks = mutableMapOf<String, (Boolean, String?) -> Unit>()
         
         override fun run() {
             try {
                 inputStream = socket.inputStream
+                outputStream = socket.outputStream
                 val buffer = ByteArray(1024)
                 var data = ""
                 
                 Log.d(TAG, "ConnectedThread started for ${socket.remoteDevice?.name}")
                 
+                // Determine if we're the sender (initiated connection) or receiver
+                isSender = socket == clientSocket
+                
+                // If we're the receiver (server), wait for handshake from sender
+                // If we're the sender (client), send handshake
+                if (isSender) {
+                    // Sender: send handshake
+                    sendHandshake()
+                }
+                
+                // Main read loop
                 while (isRunning && !isInterrupted) {
                     val bytes = inputStream?.read(buffer) ?: -1
                     if (bytes > 0) {
@@ -485,48 +606,21 @@ class BluetoothCoinTransfer(private val context: Context) {
                         // Check for size limit
                         if (data.length > MAX_MESSAGE_SIZE) {
                             Log.e(TAG, "Message too large: ${data.length} bytes")
+                            sendNack("msg_overflow", "Message too large")
                             _state.tryEmit(BluetoothState.Error("Message too large", null))
                             onError("Message too large")
                             return
                         }
                         
                         // Check for delimiter (newline)
-                        if (data.contains("\n")) {
-                            val parts = data.split("\n")
+                        if (data.contains(MESSAGE_DELIMITER)) {
+                            val parts = data.split(MESSAGE_DELIMITER)
                             for (part in parts.dropLast(1)) {
                                 if (part.isNotEmpty()) {
-                                    // Check individual message size
-                                    if (part.length > MAX_MESSAGE_SIZE) {
-                                        Log.e(TAG, "Individual message too large")
-                                        _state.tryEmit(BluetoothState.Error("Message too large", null))
-                                        onError("Message too large")
-                                        return
-                                    }
-                                    
-                                    try {
-                                        val coin = coinSerializer.deserialize(part)
-                                        if (coin != null) {
-                                            // Additional validation
-                                            if (coin.coinId.isNotEmpty() && coin.giverId.isNotEmpty()) {
-                                                Log.d(TAG, "Received coin: ${coin.coinId}")
-                                                _state.tryEmit(BluetoothState.CoinReceived(coin))
-                                                onCoinReceived(coin)
-                                                _transferChannel.trySend(TransferResult.Success(coin))
-                                            } else {
-                                                Log.e(TAG, "Received invalid coin data")
-                                                onError("Received invalid coin data")
-                                            }
-                                        } else {
-                                            Log.e(TAG, "Failed to deserialize coin")
-                                            onError("Failed to deserialize coin")
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Error processing coin", e)
-                                        onError("Error processing received data: ${e.message}")
-                                    }
+                                    processProtocolMessage(part)
                                 }
                             }
-                            data = parts.last() // Keep the incomplete part
+                            data = parts.last()
                         }
                     }
                 }
@@ -540,6 +634,159 @@ class BluetoothCoinTransfer(private val context: Context) {
             }
         }
         
+        /**
+         * Process an incoming protocol message
+         */
+        private fun processProtocolMessage(message: String) {
+            try {
+                val protocolMessage = parseProtocolMessage(message)
+                when (protocolMessage) {
+                    is ProtocolMessage.Handshake -> {
+                        Log.d(TAG, "Received handshake from ${socket.remoteDevice?.name}")
+                        // Receiver: respond to handshake
+                        if (!isSender) {
+                            sendHandshakeResponse()
+                            handshakeComplete = true
+                            _state.tryEmit(BluetoothState.Connected(socket.remoteDevice))
+                        }
+                    }
+                    is ProtocolMessage.HandshakeResponse -> {
+                        Log.d(TAG, "Received handshake response")
+                        // Sender: handshake complete
+                        if (isSender) {
+                            handshakeComplete = true
+                            _state.tryEmit(BluetoothState.Connected(socket.remoteDevice))
+                        }
+                    }
+                    is ProtocolMessage.CoinMessage -> {
+                        Log.d(TAG, "Received coin: ${protocolMessage.coin.coinId}")
+                        // Validate coin
+                        if (protocolMessage.coin.coinId.isNotEmpty() && protocolMessage.coin.giverId.isNotEmpty()) {
+                            val messageId = generateMessageId()
+                            // Send ACK
+                            sendAck(messageId)
+                            
+                            // Notify callbacks
+                            _state.tryEmit(BluetoothState.CoinReceived(protocolMessage.coin))
+                            onCoinReceived(protocolMessage.coin)
+                            _transferChannel.trySend(TransferResult.Success(protocolMessage.coin))
+                        } else {
+                            Log.e(TAG, "Received invalid coin data")
+                            sendNack("invalid_coin", "Invalid coin data")
+                            onError("Received invalid coin data")
+                        }
+                    }
+                    is ProtocolMessage.Acknowledgment -> {
+                        Log.d(TAG, "Received ACK for ${protocolMessage.messageId}")
+                        // Notify waiting callback
+                        pendingAcks[protocolMessage.messageId]?.invoke(true, null)
+                        pendingAcks.remove(protocolMessage.messageId)
+                    }
+                    is ProtocolMessage.NegativeAcknowledgment -> {
+                        Log.e(TAG, "Received NACK for ${protocolMessage.messageId}: ${protocolMessage.reason}")
+                        // Notify waiting callback
+                        pendingAcks[protocolMessage.messageId]?.invoke(false, protocolMessage.reason)
+                        pendingAcks.remove(protocolMessage.messageId)
+                    }
+                    null -> {
+                        Log.e(TAG, "Received unknown message: $message")
+                        onError("Received unknown message")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error processing protocol message", e)
+                onError("Error processing message: ${e.message}")
+            }
+        }
+        
+        /**
+         * Send handshake message (called by sender)
+         */
+        private fun sendHandshake() {
+            try {
+                val handshake = ProtocolMessage.Handshake()
+                val message = serializeProtocolMessage(handshake)
+                outputStream?.write("$message$MESSAGE_DELIMITER".toByteArray(Charsets.UTF_8))
+                outputStream?.flush()
+                Log.d(TAG, "Sent handshake")
+                
+                // Start handshake timeout
+                // Note: In a real implementation, we'd wait for response here
+                // For now, we just mark it as complete after sending
+                // The actual handshake completion is handled in processProtocolMessage
+            } catch (e: IOException) {
+                Log.e(TAG, "Error sending handshake", e)
+                onError("Error sending handshake: ${e.message}")
+            }
+        }
+        
+        /**
+         * Send handshake response (called by receiver)
+         */
+        private fun sendHandshakeResponse() {
+            try {
+                val response = ProtocolMessage.HandshakeResponse()
+                val message = serializeProtocolMessage(response)
+                outputStream?.write("$message$MESSAGE_DELIMITER".toByteArray(Charsets.UTF_8))
+                outputStream?.flush()
+                Log.d(TAG, "Sent handshake response")
+            } catch (e: IOException) {
+                Log.e(TAG, "Error sending handshake response", e)
+                onError("Error sending handshake response: ${e.message}")
+            }
+        }
+        
+        /**
+         * Send a coin message with tracking
+         */
+        fun sendCoinMessage(coin: Coin, onAck: (Boolean, String?) -> Unit) {
+            try {
+                val messageId = generateMessageId()
+                val coinMessage = ProtocolMessage.CoinMessage(coin)
+                val message = serializeProtocolMessage(coinMessage)
+                
+                // Store callback for ACK/NACK
+                pendingAcks[messageId] = onAck
+                
+                outputStream?.write("$message$MESSAGE_DELIMITER".toByteArray(Charsets.UTF_8))
+                outputStream?.flush()
+                Log.d(TAG, "Sent coin message with ID: $messageId")
+            } catch (e: IOException) {
+                Log.e(TAG, "Error sending coin message", e)
+                onAck(false, "Error sending coin: ${e.message}")
+            }
+        }
+        
+        /**
+         * Send ACK for a message
+         */
+        private fun sendAck(messageId: String) {
+            try {
+                val ack = ProtocolMessage.Acknowledgment(messageId)
+                val message = serializeProtocolMessage(ack)
+                outputStream?.write("$message$MESSAGE_DELIMITER".toByteArray(Charsets.UTF_8))
+                outputStream?.flush()
+                Log.d(TAG, "Sent ACK for: $messageId")
+            } catch (e: IOException) {
+                Log.e(TAG, "Error sending ACK", e)
+            }
+        }
+        
+        /**
+         * Send NACK for a message
+         */
+        private fun sendNack(messageId: String, reason: String) {
+            try {
+                val nack = ProtocolMessage.NegativeAcknowledgment(messageId, reason)
+                val message = serializeProtocolMessage(nack)
+                outputStream?.write("$message$MESSAGE_DELIMITER".toByteArray(Charsets.UTF_8))
+                outputStream?.flush()
+                Log.d(TAG, "Sent NACK for: $messageId, reason: $reason")
+            } catch (e: IOException) {
+                Log.e(TAG, "Error sending NACK", e)
+            }
+        }
+        
         fun cancel() {
             Log.d(TAG, "Cancelling ConnectedThread")
             isRunning = false
@@ -549,10 +796,16 @@ class BluetoothCoinTransfer(private val context: Context) {
         
         private fun cleanup() {
             Log.d(TAG, "Cleaning up ConnectedThread")
+            pendingAcks.clear()
             try {
                 inputStream?.close()
             } catch (e: IOException) {
                 Log.e(TAG, "Error closing input stream", e)
+            }
+            try {
+                outputStream?.close()
+            } catch (e: IOException) {
+                Log.e(TAG, "Error closing output stream", e)
             }
             try {
                 socket.close()
@@ -560,6 +813,7 @@ class BluetoothCoinTransfer(private val context: Context) {
                 Log.e(TAG, "Error closing socket", e)
             }
             inputStream = null
+            outputStream = null
         }
     }
     
