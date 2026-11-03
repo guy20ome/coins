@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.util.Log
 import androidx.core.content.ContextCompat
 import com.coins.model.Coin
 import com.coins.model.Wallet
@@ -23,7 +24,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.IOException
 import java.io.InputStream
 import java.util.UUID
@@ -36,6 +39,13 @@ import kotlin.math.sqrt
  * Bluetooth service UUID for coin transfer
  */
 val COIN_TRANSFER_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+/**
+ * Constants for Bluetooth operations
+ */
+private const val TAG = "BluetoothCoinTransfer"
+private const val CONNECTION_TIMEOUT_MS = 30000L // 30 seconds
+private const val MAX_MESSAGE_SIZE = 1024 * 10 // 10KB
 
 /**
  * Result class for Bluetooth operations
@@ -75,6 +85,12 @@ class BluetoothCoinTransfer(private val context: Context) {
     
     private val coinSerializer = CoinSerializer.instance
     
+    // Bluetooth state monitoring
+    private var bluetoothStateReceiver: BroadcastReceiver? = null
+    
+    // Track discovered devices to avoid duplicates
+    private val discoveredDevicesSet = mutableSetOf<String>()
+    
     // State management
     private val _state = MutableStateFlow<BluetoothState>(BluetoothState.Idle)
     val state: Flow<BluetoothState> = _state.asStateFlow()
@@ -108,10 +124,14 @@ class BluetoothCoinTransfer(private val context: Context) {
      */
     fun hasBluetoothPermissions(): Boolean {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            // Android 12+ requires BLUETOOTH_SCAN, BLUETOOTH_CONNECT, and ACCESS_FINE_LOCATION
             return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
-                   ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+                   ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+                   ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         }
-        return true
+        // Older versions only need BLUETOOTH and BLUETOOTH_ADMIN
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED &&
+               ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADMIN) == PackageManager.PERMISSION_GRANTED
     }
     
     /**
@@ -143,19 +163,31 @@ class BluetoothCoinTransfer(private val context: Context) {
                 }
                 
                 _state.emit(BluetoothState.Advertising)
+                Log.d(TAG, "Starting server")
                 
                 // Create server socket
-                serverSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord(
+                val tempServerSocket = bluetoothAdapter?.listenUsingRfcommWithServiceRecord(
                     "CoinTransferServer",
                     COIN_TRANSFER_UUID
                 )
                 
-                serverSocket?.use { socket ->
+                // Atomic assignment
+                serverSocket = tempServerSocket
+                
+                tempServerSocket?.use { socket ->
+                    Log.d(TAG, "Server waiting for connection...")
                     onError("Waiting for connection...")
                     val clientSocket = socket.accept()
                     handleConnectedSocket(clientSocket, onCoinReceived, onError)
                 }
+                
+                // Clear reference when done
+                serverSocket = null
+                Log.d(TAG, "Server stopped")
+                
             } catch (e: IOException) {
+                serverSocket = null
+                Log.e(TAG, "Error starting server", e)
                 _state.emit(BluetoothState.Error("Error starting server: ${e.message}", e))
                 onError("Error starting server: ${e.message}")
             }
@@ -168,10 +200,12 @@ class BluetoothCoinTransfer(private val context: Context) {
     fun stopServer() {
         try {
             serverSocket?.close()
+            Log.d(TAG, "Server socket closed")
+        } catch (e: IOException) {
+            Log.e(TAG, "Error closing server socket", e)
+        } finally {
             serverSocket = null
             _state.tryEmit(BluetoothState.Idle)
-        } catch (_: IOException) {
-            // Ignore
         }
     }
     
@@ -204,16 +238,29 @@ class BluetoothCoinTransfer(private val context: Context) {
                 }
                 
                 _state.emit(BluetoothState.Connecting(device))
+                Log.d(TAG, "Connecting to device: ${device.name}")
                 
                 // Create client socket
                 val socket = device.createRfcommSocketToServiceRecord(COIN_TRANSFER_UUID)
-                socket.connect()
-                clientSocket = socket
                 
-                _state.emit(BluetoothState.Connected(device))
-                onConnected()
+                // Connect with timeout
+                try {
+                    withTimeout(CONNECTION_TIMEOUT_MS) {
+                        socket.connect()
+                    }
+                    clientSocket = socket
+                    Log.d(TAG, "Connected to device: ${device.name}")
+                    
+                    _state.emit(BluetoothState.Connected(device))
+                    onConnected()
+                    
+                } catch (e: TimeoutCancellationException) {
+                    socket.close()
+                    throw IOException("Connection timed out after ${CONNECTION_TIMEOUT_MS}ms")
+                }
                 
             } catch (e: IOException) {
+                Log.e(TAG, "Error connecting to device", e)
                 _state.emit(BluetoothState.Error("Error connecting to device: ${e.message}", e))
                 onError("Error connecting to device: ${e.message}")
             }
@@ -226,13 +273,16 @@ class BluetoothCoinTransfer(private val context: Context) {
     fun disconnect() {
         try {
             clientSocket?.close()
-            clientSocket = null
-            connectedThread?.cancel()
-            connectedThread = null
-            _state.tryEmit(BluetoothState.Idle)
+            Log.d(TAG, "Client socket closed")
         } catch (e: IOException) {
-            // Ignore
+            Log.e(TAG, "Error closing client socket", e)
+        } finally {
+            clientSocket = null
         }
+        
+        connectedThread?.cancel()
+        connectedThread = null
+        _state.tryEmit(BluetoothState.Idle)
     }
     
     /**
@@ -318,35 +368,60 @@ class BluetoothCoinTransfer(private val context: Context) {
                     return@launch
                 }
 
+                // Clear previous discoveries
+                discoveredDevicesSet.clear()
+                
                 if (!bluetoothAdapter?.startDiscovery()!!) {
+                    Log.e(TAG, "Failed to start discovery")
+                    _state.emit(BluetoothState.Error("Failed to start discovery", null))
                     onError("Failed to start discovery")
                     return@launch
                 }
 
                 _state.emit(BluetoothState.Scanning)
+                Log.d(TAG, "Discovery started")
 
                 // Register IntentFilter for ACTION_FOUND to discover devices
                 val filter = IntentFilter(BluetoothDevice.ACTION_FOUND)
                 discoveryReceiver = object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent) {
-                        val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE) as BluetoothDevice?
-                        device?.let {
-                            _discoveredDevices.tryEmit(it)
-                            onDeviceDiscovered(it)
+                        try {
+                            val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE) as BluetoothDevice?
+                            device?.let {
+                                // Only emit if this is a new device
+                                if (discoveredDevicesSet.add(device.address)) {
+                                    _discoveredDevices.tryEmit(it)
+                                    onDeviceDiscovered(it)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing discovered device", e)
+                            onError("Error processing discovered device: ${e.message}")
                         }
                     }
                 }
-                context.registerReceiver(discoveryReceiver, filter)
+                
+                try {
+                    context.registerReceiver(discoveryReceiver, filter)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to register discovery receiver", e)
+                    _state.emit(BluetoothState.Error("Failed to register discovery receiver", e))
+                    onError("Failed to register discovery receiver")
+                    stopDiscovery()
+                    return@launch
+                }
 
                 // Also register for discovery ended
                 val filter2 = IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
                 context.registerReceiver(object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent) {
+                        Log.d(TAG, "Discovery finished")
                         _state.tryEmit(BluetoothState.Idle)
                     }
                 }, filter2)
 
             } catch (e: Exception) {
+                Log.e(TAG, "Error starting discovery", e)
                 _state.emit(BluetoothState.Error("Error starting discovery: ${e.message}", e))
                 onError("Error starting discovery: ${e.message}")
             }
@@ -359,19 +434,26 @@ class BluetoothCoinTransfer(private val context: Context) {
     fun stopDiscovery() {
         try {
             bluetoothAdapter?.cancelDiscovery()
-            // Unregister the discovery receiver if it was registered
-            discoveryReceiver?.let { receiver ->
-                try {
-                    context.unregisterReceiver(receiver)
-                } catch (e: IllegalArgumentException) {
-                    // Receiver was not registered
-                }
-            }
-            discoveryReceiver = null
-            _state.tryEmit(BluetoothState.Idle)
+            Log.d(TAG, "Discovery cancelled")
         } catch (e: Exception) {
-            // Ignore
+            Log.e(TAG, "Error cancelling discovery", e)
         }
+        
+        // Unregister the discovery receiver if it was registered
+        discoveryReceiver?.let { receiver ->
+            try {
+                context.unregisterReceiver(receiver)
+                Log.d(TAG, "Discovery receiver unregistered")
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "Discovery receiver was not registered")
+            }
+        }
+        discoveryReceiver = null
+        
+        // Clear discovered devices set
+        discoveredDevicesSet.clear()
+        
+        _state.tryEmit(BluetoothState.Idle)
     }
     
     /**
@@ -384,27 +466,63 @@ class BluetoothCoinTransfer(private val context: Context) {
         private val onError: (String) -> Unit
     ) : Thread() {
         
+        private var isRunning = true
+        private var inputStream: InputStream? = null
+        
         override fun run() {
             try {
-                val inputStream: InputStream = socket.inputStream
+                inputStream = socket.inputStream
                 val buffer = ByteArray(1024)
                 var data = ""
                 
-                while (!isInterrupted) {
-                    val bytes = inputStream.read(buffer)
+                Log.d(TAG, "ConnectedThread started for ${socket.remoteDevice?.name}")
+                
+                while (isRunning && !isInterrupted) {
+                    val bytes = inputStream?.read(buffer) ?: -1
                     if (bytes > 0) {
                         data += String(buffer, 0, bytes, Charsets.UTF_8)
+                        
+                        // Check for size limit
+                        if (data.length > MAX_MESSAGE_SIZE) {
+                            Log.e(TAG, "Message too large: ${data.length} bytes")
+                            _state.tryEmit(BluetoothState.Error("Message too large", null))
+                            onError("Message too large")
+                            return
+                        }
                         
                         // Check for delimiter (newline)
                         if (data.contains("\n")) {
                             val parts = data.split("\n")
-                            for (part in parts.dropLast(1)) { // Skip the last incomplete part
+                            for (part in parts.dropLast(1)) {
                                 if (part.isNotEmpty()) {
-                                    val coin = coinSerializer.deserialize(part)
-                                    if (coin != null) {
-                                        _state.tryEmit(BluetoothState.CoinReceived(coin))
-                                        onCoinReceived(coin)
-                                        _transferChannel.trySend(TransferResult.Success(coin))
+                                    // Check individual message size
+                                    if (part.length > MAX_MESSAGE_SIZE) {
+                                        Log.e(TAG, "Individual message too large")
+                                        _state.tryEmit(BluetoothState.Error("Message too large", null))
+                                        onError("Message too large")
+                                        return
+                                    }
+                                    
+                                    try {
+                                        val coin = coinSerializer.deserialize(part)
+                                        if (coin != null) {
+                                            // Additional validation
+                                            if (coin.coinId.isNotEmpty() && coin.giverId.isNotEmpty()) {
+                                                Log.d(TAG, "Received coin: ${coin.coinId}")
+                                                _state.tryEmit(BluetoothState.CoinReceived(coin))
+                                                onCoinReceived(coin)
+                                                _transferChannel.trySend(TransferResult.Success(coin))
+                                            } else {
+                                                Log.e(TAG, "Received invalid coin data")
+                                                onError("Received invalid coin data")
+                                            }
+                                        } else {
+                                            Log.e(TAG, "Failed to deserialize coin")
+                                            onError("Failed to deserialize coin")
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error processing coin", e)
+                                        onError("Error processing received data: ${e.message}")
                                     }
                                 }
                             }
@@ -412,19 +530,36 @@ class BluetoothCoinTransfer(private val context: Context) {
                         }
                     }
                 }
+                
             } catch (e: IOException) {
+                Log.e(TAG, "Connection lost", e)
                 _state.tryEmit(BluetoothState.Error("Connection lost: ${e.message}", e))
                 onError("Connection lost: ${e.message}")
+            } finally {
+                cleanup()
             }
         }
         
         fun cancel() {
+            Log.d(TAG, "Cancelling ConnectedThread")
+            isRunning = false
             interrupt()
+            cleanup()
+        }
+        
+        private fun cleanup() {
+            Log.d(TAG, "Cleaning up ConnectedThread")
+            try {
+                inputStream?.close()
+            } catch (e: IOException) {
+                Log.e(TAG, "Error closing input stream", e)
+            }
             try {
                 socket.close()
             } catch (e: IOException) {
-                // Ignore
+                Log.e(TAG, "Error closing socket", e)
             }
+            inputStream = null
         }
     }
     
@@ -522,9 +657,66 @@ class BluetoothCoinTransfer(private val context: Context) {
     }
     
     /**
+     * Register a receiver to monitor Bluetooth adapter state changes.
+     */
+    private fun registerBluetoothStateReceiver() {
+        val filter = IntentFilter().apply {
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+        }
+        
+        bluetoothStateReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent) {
+                when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                    BluetoothAdapter.STATE_OFF -> {
+                        Log.w(TAG, "Bluetooth turned off")
+                        _state.tryEmit(BluetoothState.BluetoothDisabled)
+                        stop() // Stop all operations
+                    }
+                    BluetoothAdapter.STATE_ON -> {
+                        Log.d(TAG, "Bluetooth turned on")
+                        _state.tryEmit(BluetoothState.Idle)
+                    }
+                    BluetoothAdapter.STATE_TURNING_OFF -> {
+                        Log.w(TAG, "Bluetooth turning off")
+                        _state.tryEmit(BluetoothState.BluetoothDisabled)
+                        stop()
+                    }
+                    BluetoothAdapter.STATE_TURNING_ON -> {
+                        Log.d(TAG, "Bluetooth turning on")
+                    }
+                }
+            }
+        }
+        
+        try {
+            context.registerReceiver(bluetoothStateReceiver, filter)
+            Log.d(TAG, "Bluetooth state receiver registered")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register Bluetooth state receiver", e)
+        }
+    }
+
+    /**
+     * Unregister the Bluetooth state receiver.
+     */
+    private fun unregisterBluetoothStateReceiver() {
+        bluetoothStateReceiver?.let { receiver ->
+            try {
+                context.unregisterReceiver(receiver)
+                Log.d(TAG, "Bluetooth state receiver unregistered")
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "Bluetooth state receiver was not registered")
+            }
+        }
+        bluetoothStateReceiver = null
+    }
+
+    /**
      * Stop all Bluetooth operations and clean up resources.
      */
     fun stop() {
+        Log.d(TAG, "Stopping all Bluetooth operations")
+        unregisterBluetoothStateReceiver()
         stopServer()
         stopDiscovery()
         disconnect()
@@ -539,7 +731,9 @@ class BluetoothCoinTransfer(private val context: Context) {
          * @return A new BluetoothCoinTransfer instance
          */
         fun create(context: Context): BluetoothCoinTransfer {
-            return BluetoothCoinTransfer(context)
+            return BluetoothCoinTransfer(context).apply {
+                registerBluetoothStateReceiver()
+            }
         }
     }
 }
