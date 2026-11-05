@@ -240,10 +240,11 @@ class BluetoothCoinTransferTest {
             giverId = "giver-1",
             gpsCoordinate = "48.8566,2.3522"
         )
-        val message = ProtocolMessage.CoinMessage(coin)
+        val message = ProtocolMessage.CoinMessage("msg-123", coin)
         val serialized = bluetoothTransfer.serializeProtocolMessage(message)
         
         assertTrue("CoinMessage should start with COIN:", serialized.startsWith("COIN:"))
+        assertTrue("CoinMessage should contain messageId", serialized.contains("msg-123"))
         assertTrue("CoinMessage should contain coinId", serialized.contains("test-coin"))
     }
 
@@ -292,12 +293,13 @@ class BluetoothCoinTransferTest {
     @Test
     fun `test parseProtocolMessage for CoinMessage`() {
         val coinJson = "{\"coinId\":\"test-coin\",\"giverId\":\"giver-1\",\"gpsCoordinate\":\"48.8566,2.3522\"}"
-        val message = "COIN:$coinJson"
+        val message = "COIN:msg-123:$coinJson"
         val parsed = bluetoothTransfer.parseProtocolMessage(message)
         
         assertNotNull("Parsed message should not be null", parsed)
         assertTrue("Should be CoinMessage", parsed is ProtocolMessage.CoinMessage)
         val coinMessage = parsed as ProtocolMessage.CoinMessage
+        assertEquals("Message ID should match", "msg-123", coinMessage.messageId)
         assertEquals("Coin ID should match", "test-coin", coinMessage.coin.coinId)
     }
 
