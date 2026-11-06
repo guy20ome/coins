@@ -1,5 +1,6 @@
 package com.coins.model
 
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -113,7 +114,7 @@ class CoinTest {
         val coin = senderWallet.generateCoin(parisGps, System.currentTimeMillis())
         assertNotNull(coin)
 
-        val context = android.content.ContextWrapper(null)
+        val context: android.content.Context = mockk(relaxed = true)
 
         // Transfer the coin to the receiver via BluetoothCoinTransfer
         val transferSuccess = com.coins.bluetooth.BluetoothCoinTransfer(context).transferCoin(

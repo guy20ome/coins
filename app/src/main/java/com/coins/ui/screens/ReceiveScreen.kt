@@ -44,7 +44,7 @@ fun ReceiveScreen(
 ) {
     val context = LocalContext.current
     var coins by remember { mutableStateOf(emptyList<Coin>()) }
-    var balance by remember { mutableStateOf(0) }
+    var balance by remember { mutableIntStateOf(0) }
     var isScanning by rememberSaveable { mutableStateOf(false) }
     var discoveredDevices by rememberSaveable { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
     var selectedDevice by rememberSaveable { mutableStateOf<BluetoothDevice?>(null) }

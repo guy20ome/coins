@@ -28,7 +28,7 @@ fun GiverScreen(
     viewModel: CoinsViewModel,
 ) {
     val context = LocalContext.current
-    var balance by remember { mutableStateOf(0) }
+    var balance by remember { mutableIntStateOf(0) }
     val error by viewModel.error.collectAsState()
     var coinCountInput by rememberSaveable { mutableStateOf("") }
     var gpsCoordinateInput by rememberSaveable { mutableStateOf("") }

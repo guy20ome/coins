@@ -1,5 +1,6 @@
 package com.coins.bluetooth
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -52,12 +53,12 @@ private const val ACK_TIMEOUT_MS = 5000L // 5 seconds for acknowledgment
 /**
  * Protocol message types
  */
-private const val MESSAGE_TYPE_HANDSHAKE = "HANDSHAKE"
-private const val MESSAGE_TYPE_HANDSHAKE_RESPONSE = "HANDSHAKE_OK"
-private const val MESSAGE_TYPE_ACK = "ACK"
-private const val MESSAGE_TYPE_NACK = "NACK"
-private const val MESSAGE_TYPE_COIN = "COIN"
-private const val MESSAGE_DELIMITER = "\n"
+internal const val MESSAGE_TYPE_HANDSHAKE = "HANDSHAKE"
+internal const val MESSAGE_TYPE_HANDSHAKE_RESPONSE = "HANDSHAKE_RESPONSE"
+internal const val MESSAGE_TYPE_ACK = "ACK"
+internal const val MESSAGE_TYPE_NACK = "NACK"
+internal const val MESSAGE_TYPE_COIN = "COIN"
+internal const val MESSAGE_DELIMITER = "\n"
 
 /**
  * Result class for Bluetooth operations
@@ -81,7 +82,7 @@ sealed class TransferResult {
 /**
  * Internal message types for the protocol
  */
-private sealed class ProtocolMessage {
+internal sealed class ProtocolMessage {
     data class Handshake(val appName: String = "CoinTransfer") : ProtocolMessage()
     data class HandshakeResponse(val version: String = "1.0") : ProtocolMessage()
     data class Acknowledgment(val messageId: String) : ProtocolMessage()
@@ -120,14 +121,14 @@ class BluetoothCoinTransfer(private val context: Context) {
     /**
      * Generate a unique message ID
      */
-    private fun generateMessageId(): String {
+    internal fun generateMessageId(): String {
         return "msg_${System.currentTimeMillis()}_${++messageCounter}"
     }
     
     /**
      * Serialize a protocol message to string
      */
-    private fun serializeProtocolMessage(message: ProtocolMessage): String {
+    internal fun serializeProtocolMessage(message: ProtocolMessage): String {
         return when (message) {
             is ProtocolMessage.Handshake -> "$MESSAGE_TYPE_HANDSHAKE:${message.appName}"
             is ProtocolMessage.HandshakeResponse -> "$MESSAGE_TYPE_HANDSHAKE_RESPONSE:${message.version}"
@@ -140,7 +141,7 @@ class BluetoothCoinTransfer(private val context: Context) {
     /**
      * Parse a protocol message from string
      */
-    private fun parseProtocolMessage(message: String): ProtocolMessage? {
+    internal fun parseProtocolMessage(message: String): ProtocolMessage? {
         return try {
             val parts = message.split(":", limit = 3)
             when (parts[0]) {
@@ -201,7 +202,18 @@ class BluetoothCoinTransfer(private val context: Context) {
      * Check if we have the required Bluetooth permissions.
      */
     fun hasBluetoothPermissions(): Boolean {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        return hasBluetoothPermissions(android.os.Build.VERSION.SDK_INT)
+    }
+
+    /**
+     * Check if we have the required Bluetooth permissions for the given SDK version.
+     *
+     * @param sdkInt The Android SDK version to check against
+     * @return true if all required permissions are granted for this SDK version
+     */
+    @SuppressLint("InlinedApi")
+    internal fun hasBluetoothPermissions(sdkInt: Int): Boolean {
+        if (sdkInt >= android.os.Build.VERSION_CODES.S) {
             // Android 12+ requires BLUETOOTH_SCAN, BLUETOOTH_CONNECT, and ACCESS_FINE_LOCATION
             return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
                    ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
@@ -211,6 +223,18 @@ class BluetoothCoinTransfer(private val context: Context) {
         return ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH) == PackageManager.PERMISSION_GRANTED &&
                ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_ADMIN) == PackageManager.PERMISSION_GRANTED
     }
+
+    /**
+     * Safely get the device name or fallback to its MAC address or unknown.
+     */
+    @SuppressLint("MissingPermission")
+    fun BluetoothDevice.getSafeName(): String {
+        return try {
+            name ?: address ?: "Unknown Device"
+        } catch (e: SecurityException) {
+            address ?: "Unknown Device"
+        }
+    }
     
     /**
      * Start Bluetooth server to receive coin transfers.
@@ -219,6 +243,7 @@ class BluetoothCoinTransfer(private val context: Context) {
      * @param onCoinReceived Callback when a coin is received
      * @param onError Callback when an error occurs
      */
+    @SuppressLint("MissingPermission")
     fun startServer(onCoinReceived: (Coin) -> Unit, onError: (String) -> Unit) {
         scope.launch {
             try {
@@ -261,7 +286,7 @@ class BluetoothCoinTransfer(private val context: Context) {
                     while (shouldContinue && !Thread.currentThread().isInterrupted) {
                         try {
                             val clientSocket = socket.accept()
-                            Log.d(TAG, "Server accepted connection from ${clientSocket.remoteDevice?.name}")
+                            Log.d(TAG, "Server accepted connection from ${clientSocket.remoteDevice?.getSafeName()}")
                             handleConnectedSocket(clientSocket, onCoinReceived, onError)
                         } catch (e: IOException) {
                             Log.e(TAG, "Error accepting connection", e)
@@ -276,6 +301,11 @@ class BluetoothCoinTransfer(private val context: Context) {
                 serverSocket = null
                 Log.d(TAG, "Server stopped")
                 
+            } catch (e: SecurityException) {
+                serverSocket = null
+                Log.e(TAG, "Permission denied starting server", e)
+                _state.emit(BluetoothState.PermissionsDenied)
+                onError("Bluetooth permissions required: ${e.message}")
             } catch (e: IOException) {
                 serverSocket = null
                 Log.e(TAG, "Error starting server", e)
@@ -308,6 +338,7 @@ class BluetoothCoinTransfer(private val context: Context) {
      * @param onCoinReceived Callback when a coin is received (optional, for bidirectional communication)
      * @param onError Callback when an error occurs
      */
+    @SuppressLint("MissingPermission")
     fun connectToDevice(
         device: BluetoothDevice,
         onConnected: () -> Unit,
@@ -335,7 +366,7 @@ class BluetoothCoinTransfer(private val context: Context) {
                 }
                 
                 _state.emit(BluetoothState.Connecting(device))
-                Log.d(TAG, "Connecting to device: ${device.name}")
+                Log.d(TAG, "Connecting to device: ${device.getSafeName()}")
                 
                 // Create client socket
                 val socket = device.createRfcommSocketToServiceRecord(COIN_TRANSFER_UUID)
@@ -346,7 +377,7 @@ class BluetoothCoinTransfer(private val context: Context) {
                         socket.connect()
                     }
                     clientSocket = socket
-                    Log.d(TAG, "Connected to device: ${device.name}")
+                    Log.d(TAG, "Connected to device: ${device.getSafeName()}")
                     
                     // Start the connected thread to handle communication
                     handleConnectedSocket(socket, onCoinReceived, onError)
@@ -359,6 +390,10 @@ class BluetoothCoinTransfer(private val context: Context) {
                     throw IOException("Connection timed out after ${CONNECTION_TIMEOUT_MS}ms")
                 }
                 
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Permission denied connecting to device", e)
+                _state.emit(BluetoothState.PermissionsDenied)
+                onError("Bluetooth permissions required: ${e.message}")
             } catch (e: IOException) {
                 Log.e(TAG, "Error connecting to device", e)
                 _state.emit(BluetoothState.Error("Error connecting to device: ${e.message}", e))
@@ -480,6 +515,13 @@ class BluetoothCoinTransfer(private val context: Context) {
      */
     private var discoveryReceiver: BroadcastReceiver? = null
 
+    /**
+     * Start discovering nearby Bluetooth devices.
+     *
+     * @param onDeviceDiscovered Callback when a device is discovered
+     * @param onError Callback when an error occurs
+     */
+    @SuppressLint("MissingPermission")
     fun startDiscovery(onDeviceDiscovered: (BluetoothDevice) -> Unit, onError: (String) -> Unit) {
         scope.launch {
             try {
@@ -504,7 +546,7 @@ class BluetoothCoinTransfer(private val context: Context) {
                 // Clear previous discoveries
                 discoveredDevicesSet.clear()
                 
-                if (!bluetoothAdapter?.startDiscovery()!!) {
+                if (bluetoothAdapter?.startDiscovery() != true) {
                     Log.e(TAG, "Failed to start discovery")
                     _state.emit(BluetoothState.Error("Failed to start discovery", null))
                     onError("Failed to start discovery")
@@ -553,6 +595,10 @@ class BluetoothCoinTransfer(private val context: Context) {
                     }
                 }, filter2)
 
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Permission denied starting discovery", e)
+                _state.emit(BluetoothState.PermissionsDenied)
+                onError("Bluetooth permissions required: ${e.message}")
             } catch (e: Exception) {
                 Log.e(TAG, "Error starting discovery", e)
                 _state.emit(BluetoothState.Error("Error starting discovery: ${e.message}", e))
@@ -564,10 +610,13 @@ class BluetoothCoinTransfer(private val context: Context) {
     /**
      * Stop device discovery.
      */
+    @SuppressLint("MissingPermission")
     fun stopDiscovery() {
         try {
             bluetoothAdapter?.cancelDiscovery()
             Log.d(TAG, "Discovery cancelled")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Permission denied cancelling discovery", e)
         } catch (e: Exception) {
             Log.e(TAG, "Error cancelling discovery", e)
         }
@@ -593,6 +642,7 @@ class BluetoothCoinTransfer(private val context: Context) {
      * Thread for handling connected socket communication.
      * Implements handshake protocol and message acknowledgment.
      */
+    @SuppressLint("MissingPermission")
     private inner class ConnectedThread(
         private val socket: BluetoothSocket,
         private val onCoinReceived: (Coin) -> Unit,
@@ -615,7 +665,7 @@ class BluetoothCoinTransfer(private val context: Context) {
                 val buffer = ByteArray(1024)
                 var data = ""
                 
-                Log.d(TAG, "ConnectedThread started for ${socket.remoteDevice?.name}")
+                Log.d(TAG, "ConnectedThread started for ${socket.remoteDevice?.getSafeName()}")
                 
                 // Determine if we're the sender (initiated connection) or receiver
                 isSender = socket == clientSocket
@@ -672,7 +722,7 @@ class BluetoothCoinTransfer(private val context: Context) {
                 val protocolMessage = parseProtocolMessage(message)
                 when (protocolMessage) {
                     is ProtocolMessage.Handshake -> {
-                        Log.d(TAG, "Received handshake from ${socket.remoteDevice?.name}")
+                        Log.d(TAG, "Received handshake from ${socket.remoteDevice?.getSafeName()}")
                         // Receiver: respond to handshake
                         if (!isSender) {
                             sendHandshakeResponse()
@@ -910,7 +960,7 @@ class BluetoothCoinTransfer(private val context: Context) {
      * @param gps2 The second GPS coordinate (latitude,longitude)
      * @return true if both coordinates are within 25 km of each other, false otherwise
      */
-    private fun isSameGeographicalZone(gps1: String, gps2: String): Boolean {
+    internal fun isSameGeographicalZone(gps1: String, gps2: String): Boolean {
         val (lat1, lon1) = gps1.split(",").map { it.trim().toDouble() }
         val (lat2, lon2) = gps2.split(",").map { it.trim().toDouble() }
         val distance = haversine(lat1, lon1, lat2, lon2)
@@ -926,7 +976,7 @@ class BluetoothCoinTransfer(private val context: Context) {
      * @param lon2 Longitude of the second coordinate
      * @return Distance in kilometers
      */
-    private fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    internal fun haversine(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val earthRadius = 6371.0 // Earth's radius in kilometers
         val dLat = Math.toRadians(lat2 - lat1)
         val dLon = Math.toRadians(lon2 - lon1)

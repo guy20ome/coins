@@ -2,11 +2,11 @@ package com.coins.bluetooth
 
 import com.coins.model.Coin
 import com.coins.model.CoinStatus
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 /**
  * Unit tests for CoinSerializer class.
@@ -106,8 +106,8 @@ class CoinSerializerTest {
         assertEquals("coinId should match", "coin-minimal", coin?.coinId)
         assertEquals("amountCents should match", 100, coin?.amountCents)
         assertEquals("giverId should be default", "", coin?.giverId)
-        assertEquals("latitude should be default", 0.0, coin?.latitude, 0.001)
-        assertEquals("longitude should be default", 0.0, coin?.longitude, 0.001)
+        assertEquals("latitude should be default", 0.0, coin?.latitude ?: 0.0, 0.001)
+        assertEquals("longitude should be default", 0.0, coin?.longitude ?: 0.0, 0.001)
         assertEquals("status should be default", CoinStatus.GENERATED, coin?.status)
     }
 
@@ -224,8 +224,8 @@ class CoinSerializerTest {
         assertEquals("amountCents should match", coin.amountCents, deserialized?.amountCents)
         assertEquals("giverId should match", coin.giverId, deserialized?.giverId)
         assertEquals("ownerId should match", coin.ownerId, deserialized?.ownerId)
-        assertEquals("latitude should match", coin.latitude, deserialized?.latitude, 0.001)
-        assertEquals("longitude should match", coin.longitude, deserialized?.longitude, 0.001)
+        assertEquals("latitude should match", coin.latitude, deserialized?.latitude ?: 0.0, 0.001)
+        assertEquals("longitude should match", coin.longitude, deserialized?.longitude ?: 0.0, 0.001)
         assertEquals("isDestroyed should match", coin.isDestroyed, deserialized?.isDestroyed)
         assertEquals("fullName should match", coin.fullName, deserialized?.fullName)
         assertEquals("gpsCoordinate should match", coin.gpsCoordinate, deserialized?.gpsCoordinate)

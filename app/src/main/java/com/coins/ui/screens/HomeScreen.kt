@@ -35,7 +35,7 @@ fun HomeScreen(
     val context = LocalContext.current
     
     // Collect flows
-    var balance by remember { mutableStateOf(0) }
+    var balance by remember { mutableIntStateOf(0) }
     var coins by remember { mutableStateOf(emptyList<Coin>()) }
     val error by viewModel.error.collectAsState()
     
